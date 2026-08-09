@@ -1,0 +1,6 @@
+# Clippy configuration for PortSpy.
+
+# Allowed-to-denied lints are configured centrally in Cargo.toml
+# under [workspace.lints.clippy].
+# Keep per-crate exceptions next to the code that needs them,
+# documented inline, rather than loosening the global policy here.

@@ -1,0 +1,11 @@
+/target
+**/*.rs.bk
+*.log
+.env
+.DS_Store
+Thumbs.db
+# Local Windows build artifacts
+*.exe
+*.pdb
+# Cargo metadata (CI artifacts)
+.Cargo

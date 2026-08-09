@@ -1,0 +1,39 @@
+[package]
+name = "portspy-platform"
+description = "PortSpy operating-system integration (Windows)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+portspy-core = { path = "../portspy-core" }
+thiserror.workspace = true
+tracing.workspace = true
+
+# The windows crate only compiles meaningful bindings on Windows targets;
+# on other hosts it is a stub. Declaring it target-specific keeps Linux
+# checks fast and avoids its non-Windows-incompatible transitive deps.
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+
+# The platform crate is the only place where native Windows APIs are touched.
+# Unsafe code is allowed here and nowhere else in the workspace. All other
+# lints follow the workspace policy.
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "deny"
+todo = "deny"
+panic = "deny"
+exit = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+missing_errors_doc = "deny"
+missing_panics_doc = "deny"
+module_inception = "deny"

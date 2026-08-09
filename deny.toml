@@ -1,0 +1,36 @@
+[advisories]
+version = 2
+yanked = "warn"
+ignore = []
+
+[licenses]
+version = 2
+unlicensed = "deny"
+copyleft = "deny"
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "0BSD",
+    "Zlib",
+    "MPL-2.0",
+]
+confidence-threshold = 0.8
+exceptions = [
+    { name = "windows", allow = ["MIT", "Apache-2.0"] },
+    { name = "windows-targets", allow = ["MIT", "Apache-2.0"] },
+    { name = "windows-license", allow = ["MIT", "Apache-2.0"] },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = []

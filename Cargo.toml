@@ -1,0 +1,54 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/portspy-cli",
+    "crates/portspy-core",
+    "crates/portspy-platform",
+    "crates/portspy-tui",
+]
+default-members = ["crates/portspy-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/<org-or-user>/portspy"
+authors = ["PortSpy contributors"]
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+clap = { version = "4.6", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ratatui = { version = "0.30.2", features = ["crossterm_0_29"] }
+crossterm = "0.29"
+windows = { version = "0.62", default-features = false, features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Diagnostics_Debug",
+    "Wdk_System_Threading",
+] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "deny"
+todo = "deny"
+panic = "deny"
+exit = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+missing_errors_doc = "deny"
+missing_panics_doc = "deny"
+module_inception = "deny"

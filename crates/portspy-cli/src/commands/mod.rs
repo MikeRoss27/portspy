@@ -17,7 +17,7 @@ use crate::output::{ListenerJson, Output};
 ///
 /// Returns when the snapshot cannot be captured.
 pub fn list<P: Platform + ?Sized>(
-    builder: &SnapshotBuilder<'_, P>,
+    builder: &mut SnapshotBuilder<'_, P>,
     json: bool,
 ) -> Result<(), PortSpyError> {
     let snapshot = builder.snapshot()?;
@@ -35,13 +35,20 @@ pub fn list<P: Platform + ?Sized>(
                 .map(|listener| ListenerJson::from(*listener))
                 .collect(),
         };
-        writeln!(out, "{}", serde_json::to_string_pretty(&output).map_err(json_error)?)
-            .map_err(io_error)?;
+        writeln!(
+            out,
+            "{}",
+            serde_json::to_string_pretty(&output).map_err(json_error)?
+        )
+        .map_err(io_error)?;
         return Ok(());
     }
 
-    writeln!(out, "PORT     APPLICATION      ORIGIN            PID        MEMORY   UPTIME")
-        .map_err(io_error)?;
+    writeln!(
+        out,
+        "PORT     APPLICATION      ORIGIN            PID        MEMORY   UPTIME"
+    )
+    .map_err(io_error)?;
     for listener in listeners {
         writeln!(out, "{}", table_row(listener, &snapshot)).map_err(io_error)?;
     }
@@ -54,20 +61,28 @@ pub fn list<P: Platform + ?Sized>(
 ///
 /// Returns when the snapshot cannot be captured.
 pub fn inspect<P: Platform + ?Sized>(
-    builder: &SnapshotBuilder<'_, P>,
+    builder: &mut SnapshotBuilder<'_, P>,
     port: u16,
+    protocol: Option<portspy_core::domain::protocol::Protocol>,
     json: bool,
 ) -> Result<(), PortSpyError> {
     let snapshot = builder.snapshot()?;
-    let listener = query::find_by_port(&snapshot.listeners, port);
+    let listener = match protocol {
+        Some(protocol) => query::find_by_port_and_protocol(&snapshot.listeners, port, protocol),
+        None => query::find_by_port(&snapshot.listeners, port),
+    };
     let mut out = std::io::stdout().lock();
 
     if json {
         let output = Output::Inspect {
             listener: listener.map(ListenerJson::from),
         };
-        writeln!(out, "{}", serde_json::to_string_pretty(&output).map_err(json_error)?)
-            .map_err(io_error)?;
+        writeln!(
+            out,
+            "{}",
+            serde_json::to_string_pretty(&output).map_err(json_error)?
+        )
+        .map_err(io_error)?;
         return Ok(());
     }
 
@@ -80,28 +95,51 @@ pub fn inspect<P: Platform + ?Sized>(
 
 /// Renders the `kill` command.
 ///
+/// With `tree` the owning process and every descendant are terminated.
+///
 /// # Errors
 ///
 /// Returns when the snapshot cannot be captured or the process refuses
-/// termination.
+/// termination (single-process mode).
 pub fn kill<P: Platform + ?Sized>(
-    builder: &SnapshotBuilder<'_, P>,
+    builder: &mut SnapshotBuilder<'_, P>,
     platform: &P,
     port: u16,
+    protocol: Option<portspy_core::domain::protocol::Protocol>,
+    tree: bool,
     assume_yes: bool,
 ) -> Result<(), PortSpyError> {
     let snapshot = builder.snapshot()?;
-    let Some(listener) = query::find_by_port(&snapshot.listeners, port) else {
+    let listener = match protocol {
+        Some(protocol) => query::find_by_port_and_protocol(&snapshot.listeners, port, protocol),
+        None => query::find_by_port(&snapshot.listeners, port),
+    };
+    let Some(listener) = listener else {
         writeln!(std::io::stdout().lock(), "no listener on port {port}").map_err(io_error)?;
         return Ok(());
     };
     let mut out = std::io::stdout().lock();
 
     if !assume_yes {
+        let scope = if tree {
+            let count =
+                portspy_core::processes::tree::kill_order(&snapshot.processes, listener.pid())
+                    .len();
+            if count > 1 {
+                format!(" and {} descendant(s)", count - 1)
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
         writeln!(
             out,
-            "kill {} :{} (PID {})? [y/N]",
-            listener.application.label, listener.port, listener.pid()
+            "kill {} :{}{} (PID {})? [y/N]",
+            listener.application.label,
+            listener.port,
+            scope,
+            listener.pid()
         )
         .map_err(io_error)?;
         let mut answer = String::new();
@@ -112,6 +150,23 @@ pub fn kill<P: Platform + ?Sized>(
             writeln!(out, "aborted").map_err(io_error)?;
             return Ok(());
         }
+    }
+
+    if tree {
+        let report =
+            portspy_core::processes::tree::kill_tree(platform, &snapshot.processes, listener.pid());
+        let mut line = format!(
+            "stopped tree of {} :{} (PID {}) — {}",
+            listener.application.label,
+            listener.port,
+            listener.pid(),
+            report.summary()
+        );
+        if let Some((pid, _)) = report.failed.first() {
+            line.push_str(&format!("; first failure at PID {pid}"));
+        }
+        writeln!(out, "{line}").map_err(io_error)?;
+        return Ok(());
     }
 
     match platform.kill(listener.pid()) {
@@ -150,9 +205,20 @@ fn print_details(
     listener: &Listener,
     snapshot: &portspy_core::snapshot::SystemSnapshot,
 ) -> std::io::Result<()> {
-    writeln!(out, "Port        {}", fmt_address::short(listener.address, listener.port))?;
+    writeln!(
+        out,
+        "Port        {}",
+        fmt_address::short(listener.address, listener.port)
+    )?;
     writeln!(out, "Application {}", listener.application.label)?;
     writeln!(out, "Origin      {}", listener.origin.label)?;
+    writeln!(out, "Project     {}", listener.project.label())?;
+    if listener.is_duplicate {
+        writeln!(out, "Flags       duplicate dev server")?;
+    }
+    if listener.is_orphan {
+        writeln!(out, "Flags       orphan (parent process gone)")?;
+    }
     writeln!(out, "PID         {}", listener.pid())?;
     writeln!(
         out,
@@ -167,6 +233,9 @@ fn print_details(
     writeln!(out, "Scope       {}", fmt_address::scope(listener.address))?;
     if let Some(command_line) = &listener.process.command_line {
         writeln!(out, "Command     {command_line}")?;
+    }
+    if let Some(directory) = &listener.process.working_directory {
+        writeln!(out, "Directory   {}", directory.display())?;
     }
     writeln!(out, "Process chain")?;
     writeln!(out, "  {}", listener.process.name)?;

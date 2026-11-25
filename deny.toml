@@ -1,36 +1,41 @@
-[advisories]
-version = 2
-yanked = "warn"
-ignore = []
+# cargo-deny configuration for PortSpy
+# Run with: cargo deny check
 
-[licenses]
-version = 2
-unlicensed = "deny"
-copyleft = "deny"
-allow = [
-    "MIT",
-    "Apache-2.0",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
-    "ISC",
-    "Unicode-3.0",
-    "0BSD",
-    "Zlib",
-    "MPL-2.0",
-]
-confidence-threshold = 0.8
-exceptions = [
-    { name = "windows", allow = ["MIT", "Apache-2.0"] },
-    { name = "windows-targets", allow = ["MIT", "Apache-2.0"] },
-    { name = "windows-license", allow = ["MIT", "Apache-2.0"] },
-]
+[advisories]
+# Ignore specific advisories if needed (with justification)
+# ignore = [
+#   "RUSTSEC-2023-XXXX", # Reason: ...
+# ]
 
 [bans]
-multiple-versions = "warn"
-wildcards = "deny"
-highlight = "all"
+# Deny specific crates or versions
+# deny = [
+#   { name = "some-crate", version = "=1.2.3" },
+# ]
+# Allow multiple versions of same crate (for semver-incompatible deps)
+# multiple_versions = "allow"
+# Highlight crates with multiple versions
+# highlight = "all"
+# Wildcard allow for crates that are known to have multiple versions
+# allow = [
+#   { name = "windows", version = "*" }, # Windows crate has many feature-gated versions
+# ]
+
+[licenses]
+# License policy
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-DFS-2016",
+  "Unicode-3.0",
+  "Zlib",
+  "CC0-1.0",
+]
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-allow-git = []

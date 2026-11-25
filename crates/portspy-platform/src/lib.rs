@@ -10,28 +10,33 @@
 #[cfg(windows)]
 pub mod windows;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 mod fallback;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix;
 
 #[cfg(windows)]
 pub use windows::WindowsPlatform;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub use fallback::UnsupportedPlatform;
 
 use portspy_core::platform::Platform;
 
 /// Creates the platform implementation for the current operating system.
 ///
-/// Windows gets the real implementation; every other OS gets a stub that
-/// reports every operation as unsupported, so the workspace still builds
-/// and runs (its tests) outside Windows.
+/// Windows, Linux and macOS use native backends.
 pub fn platform() -> Box<dyn Platform + Sync> {
     #[cfg(windows)]
     {
         Box::new(WindowsPlatform)
     }
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        Box::new(unix::UnixPlatform)
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         Box::new(UnsupportedPlatform)
     }

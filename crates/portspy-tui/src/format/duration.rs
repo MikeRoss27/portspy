@@ -57,6 +57,9 @@ mod tests {
 
     #[test]
     fn formats_days() {
-        assert_eq!(duration(Duration::from_secs(3 * 24 * 60 * 60 + 2 * 3600)), "3d 2h");
+        assert_eq!(
+            duration(Duration::from_secs(3 * 24 * 60 * 60 + 2 * 3600)),
+            "3d 2h"
+        );
     }
 }

@@ -16,6 +16,7 @@ pub enum OriginKind {
     Codex,
     ClaudeCode,
     Cursor,
+    Zed,
     VsCode,
     WindowsTerminal,
     PowerShell,
@@ -32,6 +33,7 @@ impl OriginKind {
             Self::Codex => "codex",
             Self::ClaudeCode => "claude-code",
             Self::Cursor => "cursor",
+            Self::Zed => "zed",
             Self::VsCode => "vscode",
             Self::WindowsTerminal => "windows-terminal",
             Self::PowerShell => "powershell",
@@ -48,6 +50,7 @@ impl OriginKind {
             Self::Codex => "Codex",
             Self::ClaudeCode => "Claude Code",
             Self::Cursor => "Cursor",
+            Self::Zed => "Zed",
             Self::VsCode => "VS Code",
             Self::WindowsTerminal => "Windows Terminal",
             Self::PowerShell => "PowerShell",
@@ -84,7 +87,12 @@ impl OriginInfo {
         confidence: Confidence,
         matched_pid: Option<ProcessId>,
     ) -> Self {
-        Self { kind, label, confidence, matched_pid }
+        Self {
+            kind,
+            label,
+            confidence,
+            matched_pid,
+        }
     }
 }
 

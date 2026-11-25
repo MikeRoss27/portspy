@@ -1,4 +1,4 @@
-//! Inspect screen: listeners table on the left, details on the right.
+//! Inspect screen: full-width details or a split view, depending on available space.
 
 use ratatui::Frame;
 
@@ -7,11 +7,13 @@ use crate::ui::components::{details_panel, footer, header, listeners_table};
 use crate::ui::layout::{inspect_layout, main_layout};
 
 /// Renders the inspect screen.
-pub fn render(frame: &mut Frame<'_>, state: &AppState) {
+pub fn render(frame: &mut Frame<'_>, state: &mut AppState) {
     let (header_area, body_area, footer_area) = main_layout(frame.area());
     header::render(frame, header_area, state);
     let (table_area, panel_area) = inspect_layout(body_area);
-    listeners_table::render(frame, table_area, state);
+    if let Some(table_area) = table_area {
+        listeners_table::render(frame, table_area, state);
+    }
     details_panel::render(frame, panel_area, state);
     footer::render(frame, footer_area, state);
 }

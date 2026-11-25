@@ -10,7 +10,7 @@ use super::confidence::Confidence;
 /// This is always an inference. A `node.exe` process may be Next.js, Vite or
 /// anything else; the [`ApplicationInfo`] carries the best guess together
 /// with its confidence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ApplicationKind {
     NextJs,
@@ -73,7 +73,11 @@ pub struct ApplicationInfo {
 impl ApplicationInfo {
     /// Creates a new inference.
     pub const fn new(kind: ApplicationKind, label: String, confidence: Confidence) -> Self {
-        Self { kind, label, confidence }
+        Self {
+            kind,
+            label,
+            confidence,
+        }
     }
 }
 

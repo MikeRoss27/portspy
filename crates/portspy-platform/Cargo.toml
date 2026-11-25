@@ -1,6 +1,6 @@
 [package]
 name = "portspy-platform"
-description = "PortSpy operating-system integration (Windows)"
+description = "PortSpy operating-system integration"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-portspy-core = { path = "../portspy-core" }
+portspy-core = { version = "0.1.0", path = "../portspy-core" }
 thiserror.workspace = true
 tracing.workspace = true
 
@@ -18,6 +18,17 @@ tracing.workspace = true
 # checks fast and avoids its non-Windows-incompatible transitive deps.
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+rustix = { version = "1.1.6", features = ["process"] }
+sysinfo = { version = "0.40.4", default-features = false, features = ["system"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+procfs = { version = "0.18", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+libproc = "0.15"
 
 # The platform crate is the only place where native Windows APIs are touched.
 # Unsafe code is allowed here and nowhere else in the workspace. All other

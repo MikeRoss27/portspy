@@ -7,10 +7,10 @@ pub mod kill;
 pub mod ports;
 pub mod processes;
 
-use portspy_core::domain::process::ProcessId;
+use portspy_core::domain::process::{ProcessId, ProcessIdentity};
 use portspy_core::platform::{KillOutcome, Platform, PlatformError, RawListener, RawProcess};
-use windows::core::Error as WindowsError;
 use windows::Win32::Foundation::WIN32_ERROR;
+use windows::core::Error as WindowsError;
 
 /// Windows implementation of the platform contract.
 #[derive(Debug, Clone, Copy, Default)]
@@ -18,7 +18,7 @@ pub struct WindowsPlatform;
 
 impl Platform for WindowsPlatform {
     fn listeners(&self) -> Result<Vec<RawListener>, PlatformError> {
-        ports::tcp_listeners()
+        ports::listeners()
     }
 
     fn processes(&self) -> Result<Vec<RawProcess>, PlatformError> {
@@ -27,6 +27,10 @@ impl Platform for WindowsPlatform {
 
     fn kill(&self, pid: ProcessId) -> Result<KillOutcome, PlatformError> {
         kill::kill(pid)
+    }
+
+    fn kill_checked(&self, identity: ProcessIdentity) -> Result<KillOutcome, PlatformError> {
+        kill::kill_checked(identity)
     }
 }
 
@@ -49,6 +53,9 @@ pub(crate) fn is_win32_error(error: &WindowsError, code: WIN32_ERROR) -> bool {
 /// issue; the caller cannot do anything useful with the failure on the hot
 /// snapshot path.
 pub(crate) fn close(handle: windows::Win32::Foundation::HANDLE) {
+    if handle.is_invalid() {
+        return;
+    }
     // Safety: the caller guarantees `handle` is a valid open handle (or
     // null); closing is allowed to fail silently.
     let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };

@@ -54,14 +54,11 @@ portspy/
 │   │       │
 │   │       ├── detection/
 │   │       │   ├── mod.rs
-│   │       │   ├── origin.rs
-│   │       │   ├── application.rs
-│   │       │   └── rules/
-│   │       │       ├── mod.rs
-│   │       │       ├── agents.rs
-│   │       │       ├── terminals.rs
-│   │       │       ├── runtimes.rs
-│   │       │       └── frameworks.rs
+│   │       │   ├── origin/
+│   │       │   ├── application/
+│   │       │   ├── project/
+│   │       │   ├── duplicates.rs
+│   │       │   └── orphan.rs
 │   │       │
 │   │       ├── snapshot/
 │   │       │   ├── mod.rs
@@ -225,6 +222,9 @@ portspy-core
   ├─ enrichit
   ├─ détecte application
   ├─ détecte origine
+  ├─ détecte projet
+  ├─ détecte orphelins
+  ├─ marque doublons
   └─ produit Snapshot
   │
   ▼
@@ -255,6 +255,10 @@ pub struct Listener {
     pub process: ProcessInfo,
     pub application: ApplicationInfo,
     pub origin: OriginInfo,
+    pub project: ProjectInfo,
+
+    pub is_duplicate: bool,
+    pub is_orphan: bool,
 }
 ```
 

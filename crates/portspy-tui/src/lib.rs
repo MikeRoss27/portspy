@@ -9,5 +9,6 @@ pub mod app;
 pub mod collector;
 pub mod format;
 pub mod input;
+mod recent;
 pub mod state;
 pub mod ui;

@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "crates/portspy-cli",
     "crates/portspy-core",
@@ -11,7 +11,7 @@ default-members = ["crates/portspy-cli"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.95"
 license = "MIT"
 repository = "https://github.com/<org-or-user>/portspy"
 authors = ["PortSpy contributors"]
@@ -36,6 +36,7 @@ windows = { version = "0.62", default-features = false, features = [
     "Wdk_System_Threading",
 ] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

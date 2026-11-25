@@ -1,7 +1,7 @@
 //! The platform contract.
 //!
 //! `portspy-core` defines what the rest of the product needs from the
-//! operating system. `portspy-platform` provides the Windows implementation;
+//! operating system. `portspy-platform` provides the native implementations;
 //! the CLI wires them together. The domain never calls Win32 directly.
 
 use std::fmt;
@@ -71,12 +71,21 @@ pub enum PlatformError {
     /// A native call failed with an unexpected error code.
     #[error("windows API `{api}` failed with code {code:#x}")]
     CallFailed { api: &'static str, code: u32 },
+    /// A platform library returned an error.
+    #[error("{operation}: {message}")]
+    OperationFailed {
+        operation: &'static str,
+        message: String,
+    },
     /// The target process refused access (elevated, protected, system).
     #[error("access denied for process {pid}")]
     AccessDenied { pid: ProcessId },
     /// The process disappeared between enumeration and inspection.
     #[error("process {pid} has exited")]
     ProcessGone { pid: ProcessId },
+    /// The observed process could not be matched to the reviewed identity.
+    #[error("could not verify the identity of PID {pid}")]
+    IdentityChanged { pid: ProcessId },
     /// This platform has no implementation for the requested operation.
     #[error("unsupported on this platform: {0}")]
     Unsupported(&'static str),
@@ -91,7 +100,8 @@ pub enum PlatformError {
 /// Implementations must be `Send + Sync`: snapshots are built on background
 /// threads, and the TUI shares one platform between its collector thread and
 /// the UI thread.
-pub trait Platform: Send + Sync {    /// Returns the current listening sockets.
+pub trait Platform: Send + Sync {
+    /// Returns the current listening sockets.
     ///
     /// # Errors
     ///
@@ -116,6 +126,17 @@ pub trait Platform: Send + Sync {    /// Returns the current listening sockets.
     /// Returns [`PlatformError::AccessDenied`] when the process refuses
     /// termination and [`PlatformError::ProcessGone`] when it disappeared.
     fn kill(&self, pid: ProcessId) -> Result<KillOutcome, PlatformError>;
+
+    /// Terminates the reviewed process only while its identity can be verified.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if verification or termination fails or the platform
+    /// does not implement identity-checked termination.
+    fn kill_checked(&self, identity: ProcessIdentity) -> Result<KillOutcome, PlatformError> {
+        let _ = identity;
+        Err(PlatformError::Unsupported("identity-checked termination"))
+    }
 
     /// Returns the full process information for one PID, when available.
     ///

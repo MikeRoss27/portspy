@@ -13,15 +13,16 @@ name = "portspy"
 path = "src/main.rs"
 
 [dependencies]
-portspy-core = { path = "../portspy-core" }
-portspy-platform = { path = "../portspy-platform" }
-portspy-tui = { path = "../portspy-tui" }
+portspy-core = { version = "0.1.0", path = "../portspy-core" }
+portspy-platform = { version = "0.1.0", path = "../portspy-platform" }
+portspy-tui = { version = "0.1.0", path = "../portspy-tui" }
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+time.workspace = true
 
 [lints]
 workspace = true

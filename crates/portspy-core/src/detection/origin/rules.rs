@@ -30,29 +30,50 @@ impl OriginRule {
 /// environments; `bash.exe` is deliberately absent (Git Bash would be a
 /// false positive).
 const ORIGIN_RULES: &[OriginRule] = &[
-    OriginRule { kind: OriginKind::Codex, executable_names: &["codex.exe", "codex"] },
+    OriginRule {
+        kind: OriginKind::Codex,
+        executable_names: &["codex.exe", "codex"],
+    },
     OriginRule {
         kind: OriginKind::ClaudeCode,
         executable_names: &["claude.exe", "claude"],
     },
-    OriginRule { kind: OriginKind::Cursor, executable_names: &["cursor.exe"] },
-    OriginRule { kind: OriginKind::VsCode, executable_names: &["code.exe"] },
+    OriginRule {
+        kind: OriginKind::Cursor,
+        executable_names: &["cursor.exe"],
+    },
+    OriginRule {
+        kind: OriginKind::Zed,
+        executable_names: &["zed.exe"],
+    },
+    OriginRule {
+        kind: OriginKind::VsCode,
+        executable_names: &["code.exe"],
+    },
     OriginRule {
         kind: OriginKind::WindowsTerminal,
-        executable_names: &["windowsterminal.exe"],
+        executable_names: &["windowsterminal.exe", "wt.exe", "wt"],
     },
     OriginRule {
         kind: OriginKind::PowerShell,
         executable_names: &["powershell.exe", "pwsh.exe", "windowspowershell.exe"],
     },
-    OriginRule { kind: OriginKind::Cmd, executable_names: &["cmd.exe"] },
-    OriginRule { kind: OriginKind::Docker, executable_names: &[
-        "docker desktop.exe",
-        "docker.exe",
-        "com.docker.backend.exe",
-        "dockerd.exe",
-        "containerd.exe",
-    ] },
+    OriginRule {
+        kind: OriginKind::Cmd,
+        executable_names: &["cmd.exe"],
+    },
+    OriginRule {
+        kind: OriginKind::Docker,
+        executable_names: &[
+            "docker desktop.exe",
+            "docker.exe",
+            "com.docker.backend.exe",
+            "dockerd.exe",
+            "containerd.exe",
+            "docker-proxy.exe",
+            "docker-proxy",
+        ],
+    },
     OriginRule {
         kind: OriginKind::Wsl,
         executable_names: &["wsl.exe", "wslhost.exe", "wslrelay.exe"],
@@ -104,7 +125,7 @@ pub(crate) fn detect_origin(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::{detect_origin, ORIGIN_RULES};
+    use super::{ORIGIN_RULES, detect_origin};
     use crate::detection::DetectionContext;
     use crate::domain::confidence::Confidence;
     use crate::domain::origin::{OriginInfo, OriginKind};
@@ -190,6 +211,20 @@ mod tests {
         let origin = detect_in_chain(&processes);
         assert_eq!(origin.kind, OriginKind::VsCode);
         assert_eq!(origin.matched_pid, Some(ProcessId(12)));
+    }
+
+    #[test]
+    fn zed_in_chain_wins_over_terminal() {
+        let processes = chain_with_agent("Zed.exe", 12);
+        let origin = detect_in_chain(&processes);
+        assert_eq!(origin.kind, OriginKind::Zed);
+        assert_eq!(origin.matched_pid, Some(ProcessId(12)));
+    }
+
+    #[test]
+    fn unrelated_zed_name_does_not_match() {
+        let origin = leaf_only("zed-helper.exe");
+        assert_eq!(origin.kind, OriginKind::Unknown);
     }
 
     #[test]
@@ -302,6 +337,7 @@ mod tests {
             (OriginKind::ClaudeCode, "claude.exe"),
             (OriginKind::ClaudeCode, "claude"),
             (OriginKind::Cursor, "cursor.exe"),
+            (OriginKind::Zed, "Zed.exe"),
             (OriginKind::VsCode, "Code.exe"),
             (OriginKind::WindowsTerminal, "WindowsTerminal.exe"),
             (OriginKind::PowerShell, "pwsh.exe"),
@@ -322,9 +358,11 @@ mod tests {
     #[test]
     fn git_bash_is_not_wsl() {
         // bash.exe is not in the WSL rule set on purpose.
-        assert!(!ORIGIN_RULES
-            .iter()
-            .find(|r| r.kind == OriginKind::Wsl)
-            .is_some_and(|r| r.executable_names.contains(&"bash.exe")));
+        assert!(
+            !ORIGIN_RULES
+                .iter()
+                .find(|r| r.kind == OriginKind::Wsl)
+                .is_some_and(|r| r.executable_names.contains(&"bash.exe"))
+        );
     }
 }

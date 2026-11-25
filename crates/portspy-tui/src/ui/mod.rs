@@ -13,16 +13,18 @@ use ratatui::Frame;
 use crate::state::AppState;
 
 /// Renders the current mode into the frame.
-pub fn render(frame: &mut Frame<'_>, state: &AppState) {
+pub fn render(frame: &mut Frame<'_>, state: &mut AppState) {
     match state.mode {
-        crate::state::AppMode::Browse => screens::listeners::render(frame, state),
-        crate::state::AppMode::Inspect => screens::details::render(frame, state),
-        crate::state::AppMode::Search => {
+        crate::state::AppMode::Browse | crate::state::AppMode::Search => {
             screens::listeners::render(frame, state);
-            components::search::overlay(frame, frame.area(), state);
         }
+        crate::state::AppMode::Inspect => screens::details::render(frame, state),
         crate::state::AppMode::ConfirmKill => {
-            screens::listeners::render(frame, state);
+            if state.mode_behind_stop_review() == crate::state::AppMode::Inspect {
+                screens::details::render(frame, state);
+            } else {
+                screens::listeners::render(frame, state);
+            }
             components::confirm::overlay(frame, frame.area(), state);
         }
     }

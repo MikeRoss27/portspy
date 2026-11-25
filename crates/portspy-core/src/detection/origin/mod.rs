@@ -35,8 +35,8 @@ pub mod rules;
 
 use crate::detection::DetectionContext;
 use crate::domain::origin::OriginInfo;
-use crate::processes::ancestry::ProcessAncestry;
 use crate::domain::process::ProcessInfo;
+use crate::processes::ancestry::ProcessAncestry;
 
 /// Rule-based origin detector.
 ///

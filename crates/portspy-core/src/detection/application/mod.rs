@@ -24,7 +24,8 @@
 
 pub mod rules;
 
-use crate::domain::application::ApplicationInfo;
+use crate::domain::application::{ApplicationInfo, ApplicationKind};
+use crate::domain::confidence::Confidence;
 use crate::domain::process::ProcessInfo;
 
 /// Rule-based application detector.
@@ -45,6 +46,40 @@ impl ApplicationDetector {
     /// Detects the application of a process.
     pub fn detect(&self, process: &ProcessInfo) -> ApplicationInfo {
         let (kind, confidence) = crate::detection::application::rules::detect_application(process);
+        if kind == ApplicationKind::Unknown {
+            return ApplicationInfo::new(
+                kind,
+                process.display_name().to_owned(),
+                Confidence::Unknown,
+            );
+        }
         ApplicationInfo::new(kind, kind.label().to_owned(), confidence)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ApplicationDetector;
+    use crate::domain::application::ApplicationKind;
+    use crate::domain::process::{ProcessId, ProcessInfo};
+
+    #[test]
+    fn unknown_application_falls_back_to_factual_process_name() {
+        let process = ProcessInfo {
+            pid: ProcessId(1),
+            parent_pid: None,
+            name: "svchost.exe".to_owned(),
+            executable: None,
+            command_line: None,
+            working_directory: None,
+            started_at: None,
+            memory_bytes: None,
+            cpu_percent: None,
+            ancestors: Vec::new(),
+        };
+
+        let application = ApplicationDetector::new().detect(&process);
+        assert_eq!(application.kind, ApplicationKind::Unknown);
+        assert_eq!(application.label, "svchost.exe");
     }
 }

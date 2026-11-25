@@ -5,12 +5,14 @@ use std::fmt;
 
 /// Protocol carried by a listener.
 ///
-/// `v0.1` only discovers TCP listeners. UDP arrives later, so the enum is
-/// designed to grow without breaking existing consumers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// The enum is designed to grow (QUIC, ...) without breaking existing
+/// consumers: every consumer renders through [`Protocol::as_str`] and the
+/// identity of a listener always includes the protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
     Tcp,
+    Udp,
 }
 
 impl Protocol {
@@ -18,6 +20,7 @@ impl Protocol {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Tcp => "tcp",
+            Self::Udp => "udp",
         }
     }
 }

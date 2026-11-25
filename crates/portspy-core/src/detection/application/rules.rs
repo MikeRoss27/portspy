@@ -28,7 +28,7 @@ pub(crate) fn detect_application(process: &ProcessInfo) -> (ApplicationKind, Con
         let has_next = command_line.contains("\\next\\")
             || command_line.contains("/next/")
             || tokens.iter().any(|token| token.contains("next"));
-        if has_next && tokens.contains(&"dev") {
+        if has_next && (tokens.contains(&"dev") || tokens.contains(&"start")) {
             return (ApplicationKind::NextJs, Confidence::High);
         }
     }
@@ -45,7 +45,10 @@ pub(crate) fn detect_application(process: &ProcessInfo) -> (ApplicationKind, Con
         return (ApplicationKind::Python, Confidence::Exact);
     }
 
-    if matches!(name.as_str(), "postgres.exe" | "postmaster.exe" | "postgres") {
+    if matches!(
+        name.as_str(),
+        "postgres.exe" | "postmaster.exe" | "postgres"
+    ) {
         return (ApplicationKind::PostgreSql, Confidence::Exact);
     }
 
@@ -62,6 +65,8 @@ pub(crate) fn detect_application(process: &ProcessInfo) -> (ApplicationKind, Con
             | "docker desktop.exe"
             | "containerd.exe"
             | "containerd"
+            | "docker-proxy.exe"
+            | "docker-proxy"
     ) {
         return (ApplicationKind::Docker, Confidence::Exact);
     }
@@ -84,13 +89,10 @@ fn is_rust_process(process: &ProcessInfo) -> bool {
     if command_line.to_lowercase().contains("cargo run") {
         return true;
     }
-    process
-        .executable
-        .as_deref()
-        .is_some_and(|path| {
-            let path = path.to_string_lossy();
-            path.contains("\\target\\") || path.contains("/target/")
-        })
+    process.executable.as_deref().is_some_and(|path| {
+        let path = path.to_string_lossy();
+        path.contains("\\target\\") || path.contains("/target/")
+    })
 }
 
 #[cfg(test)]
@@ -122,7 +124,9 @@ mod tests {
     fn next_dev_is_nextjs() {
         let p = process(
             "node.exe",
-            Some(r#""C:\Program Files\nodejs\node.exe" "C:\dev\app\node_modules\next\dist\bin\next" dev -p 3000"#),
+            Some(
+                r#""C:\Program Files\nodejs\node.exe" "C:\dev\app\node_modules\next\dist\bin\next" dev -p 3000"#,
+            ),
             None,
         );
         let (kind, confidence) = detect_application(&p);
@@ -188,7 +192,11 @@ mod tests {
 
     #[test]
     fn cargo_run_is_rust() {
-        let p = process("server.exe", Some("cargo run --release"), Some("D:\\dev\\x\\server.exe"));
+        let p = process(
+            "server.exe",
+            Some("cargo run --release"),
+            Some("D:\\dev\\x\\server.exe"),
+        );
         let (kind, confidence) = detect_application(&p);
         assert_eq!(kind, ApplicationKind::Rust);
         assert_eq!(confidence, Confidence::Medium);

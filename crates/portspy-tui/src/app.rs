@@ -7,6 +7,7 @@
 use std::io;
 use std::panic;
 use std::sync::{Arc, mpsc};
+use std::thread;
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
@@ -15,6 +16,8 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use portspy_core::error::PortSpyError;
 use portspy_core::platform::Platform;
+use portspy_core::processes::stop::StopPlan;
+use portspy_core::processes::tree::TreeKillReport;
 use portspy_core::snapshot::SystemSnapshot;
 use portspy_core::snapshot::builder::SnapshotBuilder;
 
@@ -24,11 +27,29 @@ use crate::input::keymap::map_key;
 use crate::state::{AppMode, AppState, Notification};
 use crate::ui;
 
-/// Messages sent from the collector thread to the UI loop.
+/// Messages sent from the background threads to the UI loop.
 #[derive(Debug)]
 pub enum Message {
     Snapshot(SystemSnapshot),
     CollectionError(PortSpyError),
+    StopCanceled(String),
+    StopFinished {
+        plan: StopPlan,
+        report: TreeKillReport,
+    },
+}
+
+impl Message {
+    fn apply(self, state: &mut AppState) {
+        match self {
+            Self::Snapshot(snapshot) => state.refresh_with(snapshot),
+            Self::CollectionError(error) => {
+                state.notification = Some(Notification::new(format!("collection failed: {error}")));
+            }
+            Self::StopCanceled(reason) => state.stop_validation_failed(reason),
+            Self::StopFinished { plan, report } => state.report_stop(plan, report),
+        }
+    }
 }
 
 /// How long a notification stays visible.
@@ -92,21 +113,14 @@ impl App {
     ) -> Result<(), io::Error> {
         let mut state = AppState::new();
         let (tx, rx) = mpsc::channel();
-        let _collector = collector::spawn(self.platform.clone(), tx)?;
+        let _collector = collector::spawn(self.platform.clone(), tx.clone())?;
+        let session_alive = Arc::new(());
         self.draw(terminal, &mut state)?;
 
         loop {
-            // Apply everything the collector produced since the last frame.
+            // Apply everything the workers produced since the last frame.
             while let Ok(message) = rx.try_recv() {
-                match message {
-                    Message::Snapshot(snapshot) => {
-                        state.refresh_with(snapshot);
-                    }
-                    Message::CollectionError(error) => {
-                        state.notification =
-                            Some(Notification::new(format!("collection failed: {error}")));
-                    }
-                }
+                message.apply(&mut state);
             }
             state.expire_notification(NOTIFICATION_LIFETIME);
             self.draw(terminal, &mut state)?;
@@ -120,7 +134,7 @@ impl App {
             if key.kind != KeyEventKind::Press {
                 continue;
             }
-            if self.handle_key(&mut state, key, terminal)? {
+            if self.handle_key(&mut state, key, terminal, &tx, &session_alive)? {
                 return Ok(());
             }
         }
@@ -131,6 +145,8 @@ impl App {
         state: &mut AppState,
         key: KeyEvent,
         terminal: &Terminal<CrosstermBackend<io::Stdout>>,
+        tx: &mpsc::Sender<Message>,
+        session_alive: &Arc<()>,
     ) -> Result<bool, io::Error> {
         let action = map_key(key, state.mode);
         if action == Some(Action::Quit) {
@@ -158,7 +174,7 @@ impl App {
             Some(Action::ConfirmKill) if state.mode == AppMode::ConfirmKill => {
                 let size = terminal.size()?;
                 if ui::components::confirm::can_review(size.width, size.height) {
-                    self.kill(state);
+                    self.confirm_stop(state, tx, session_alive);
                 } else {
                     state.cancel_stop("Stop canceled · terminal too small to review");
                 }
@@ -172,24 +188,44 @@ impl App {
         }
     }
 
-    fn kill(&self, state: &mut AppState) {
-        let Some(plan) = state.stop_plan.clone() else {
+    fn confirm_stop(
+        &self,
+        state: &mut AppState,
+        tx: &mpsc::Sender<Message>,
+        session_alive: &Arc<()>,
+    ) {
+        let Some(plan) = state.begin_stop() else {
             return;
         };
-        let mut builder = SnapshotBuilder::new(self.platform.as_ref());
-        match builder.snapshot() {
-            Ok(snapshot) => state.refresh_with(snapshot),
-            Err(error) => {
-                state.cancel_stop(format!("Stop canceled · fresh scan failed: {error}"));
-                return;
-            }
+        let platform = self.platform.clone();
+        let tx = tx.clone();
+        let session_alive = Arc::downgrade(session_alive);
+        let worker = thread::Builder::new()
+            .name("portspy-stop".to_owned())
+            .spawn(move || {
+                let fresh = SnapshotBuilder::new(platform.as_ref()).snapshot();
+                let message = match fresh {
+                    Err(error) => {
+                        Message::StopCanceled(format!("Stop canceled · fresh scan failed: {error}"))
+                    }
+                    Ok(snapshot) if !plan.matches(&snapshot) => Message::StopCanceled(
+                        "Stop canceled · target or affected scope changed".into(),
+                    ),
+                    Ok(_) => {
+                        // The session can close while the scan waits on the OS.
+                        let Some(_session) = session_alive.upgrade() else {
+                            return;
+                        };
+                        let report = plan.execute(platform.as_ref());
+                        Message::StopFinished { plan, report }
+                    }
+                };
+                let _ = tx.send(message);
+            });
+        if let Err(error) = worker {
+            state
+                .stop_validation_failed(format!("Stop canceled · could not start worker: {error}"));
         }
-        if state.stop_plan.is_none() {
-            return;
-        }
-        state.apply(Action::ConfirmKill);
-        let report = plan.execute(self.platform.as_ref());
-        state.report_stop(plan, report);
     }
 
     fn draw(
@@ -206,25 +242,42 @@ impl App {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use super::{App, AppState, SnapshotBuilder};
+    use super::{App, AppMode, AppState, SnapshotBuilder};
     use crate::input::actions::Action;
     use portspy_core::domain::process::{ProcessId, ProcessIdentity};
     use portspy_core::domain::protocol::Protocol;
     use portspy_core::platform::{KillOutcome, Platform, PlatformError, RawListener, RawProcess};
     use std::io;
     use std::net::TcpListener;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, mpsc};
     use std::time::{Duration, UNIX_EPOCH};
+
+    const WORKER_TIMEOUT: Duration = Duration::from_secs(2);
+
+    struct ScanPause {
+        started: mpsc::Sender<()>,
+        resume: Mutex<mpsc::Receiver<()>>,
+    }
 
     #[derive(Default)]
     struct FakePlatform {
         listeners: Vec<RawListener>,
         processes: Vec<RawProcess>,
         stopped: Mutex<Vec<ProcessIdentity>>,
+        pause: Option<ScanPause>,
     }
 
     impl Platform for FakePlatform {
         fn listeners(&self) -> Result<Vec<RawListener>, PlatformError> {
+            if let Some(pause) = &self.pause {
+                pause.started.send(()).expect("scan observer");
+                pause
+                    .resume
+                    .lock()
+                    .expect("scan pause")
+                    .recv_timeout(WORKER_TIMEOUT)
+                    .expect("resume scan");
+            }
             Ok(self.listeners.clone())
         }
 
@@ -293,10 +346,16 @@ mod tests {
             ..Default::default()
         });
         let app = App::new(platform.clone());
-        app.kill(&mut state);
+        let (tx, rx) = mpsc::channel();
+        let session_alive = Arc::new(());
+        app.confirm_stop(&mut state, &tx, &session_alive);
+        rx.recv_timeout(WORKER_TIMEOUT)
+            .expect("worker result")
+            .apply(&mut state);
 
         assert!(platform.stopped.lock().expect("stop record").is_empty());
         assert!(state.stop_plan.is_none());
+        assert!(!state.stop_in_progress());
         assert!(
             state
                 .notification
@@ -304,6 +363,112 @@ mod tests {
                 .message
                 .contains("scope changed")
         );
+        Ok(())
+    }
+
+    struct PausedReview {
+        state: AppState,
+        platform: Arc<FakePlatform>,
+        scan_started: mpsc::Receiver<()>,
+        resume: mpsc::Sender<()>,
+    }
+
+    fn review_and_pause_scan() -> io::Result<PausedReview> {
+        let socket = TcpListener::bind("127.0.0.1:0")?;
+        let address = socket.local_addr()?;
+        let mut platform = FakePlatform {
+            listeners: vec![RawListener {
+                protocol: Protocol::Tcp,
+                address: address.ip(),
+                port: address.port(),
+                pid: ProcessId(71),
+            }],
+            processes: vec![process(71, None)],
+            ..Default::default()
+        };
+        let mut state = AppState::new();
+        state.refresh_with(
+            SnapshotBuilder::new(&platform)
+                .snapshot()
+                .expect("initial scan"),
+        );
+        state.apply(Action::RequestKill);
+        let (started, scan_started) = mpsc::channel();
+        let (resume, paused) = mpsc::channel();
+        platform.pause = Some(ScanPause {
+            started,
+            resume: Mutex::new(paused),
+        });
+        Ok(PausedReview {
+            state,
+            platform: Arc::new(platform),
+            scan_started,
+            resume,
+        })
+    }
+
+    #[test]
+    fn confirmed_stop_allows_navigation_and_blocks_duplicate_stops_during_scan() -> io::Result<()> {
+        let PausedReview {
+            mut state,
+            platform,
+            scan_started,
+            resume,
+        } = review_and_pause_scan()?;
+        let identity = state.stop_plan.as_ref().expect("review").process.identity;
+        let app = App::new(platform.clone());
+        let (tx, rx) = mpsc::channel();
+        let session_alive = Arc::new(());
+
+        app.confirm_stop(&mut state, &tx, &session_alive);
+        scan_started
+            .recv_timeout(WORKER_TIMEOUT)
+            .expect("scan started");
+        assert!(state.stop_in_progress());
+        assert_eq!(state.mode, AppMode::Browse);
+        state.apply(Action::RequestKillTree);
+        assert!(state.stop_plan.is_none());
+        state.apply(Action::Inspect);
+        assert_eq!(state.mode, AppMode::Inspect);
+        assert!(platform.stopped.lock().expect("stop record").is_empty());
+
+        resume.send(()).expect("resume scan");
+        rx.recv_timeout(WORKER_TIMEOUT)
+            .expect("worker result")
+            .apply(&mut state);
+        assert!(!state.stop_in_progress());
+        assert_eq!(*platform.stopped.lock().expect("stop record"), [identity]);
+        assert_eq!(state.mode, AppMode::Inspect);
+        state.apply(Action::RequestKill);
+        assert!(state.stop_plan.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn closing_the_session_during_the_scan_cancels_the_signal() -> io::Result<()> {
+        let PausedReview {
+            mut state,
+            platform,
+            scan_started,
+            resume,
+        } = review_and_pause_scan()?;
+        let app = App::new(platform.clone());
+        let (tx, rx) = mpsc::channel();
+        let session_alive = Arc::new(());
+
+        app.confirm_stop(&mut state, &tx, &session_alive);
+        scan_started
+            .recv_timeout(WORKER_TIMEOUT)
+            .expect("scan started");
+        drop(session_alive);
+        drop(tx);
+        resume.send(()).expect("resume scan");
+
+        assert!(matches!(
+            rx.recv_timeout(WORKER_TIMEOUT),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        ));
+        assert!(platform.stopped.lock().expect("stop record").is_empty());
         Ok(())
     }
 }

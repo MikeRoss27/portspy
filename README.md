@@ -592,12 +592,14 @@ A new crate should only exist when there is a real architectural boundary that j
 | Platform | Socket discovery | Process metadata |
 | --- | --- | --- |
 | Windows 11 | Windows IP Helper API | Win32 process APIs |
-| Linux | `/proc` socket tables in the current network namespace | `sysinfo` |
+| Linux | `/proc` socket tables in the current network namespace | `/proc` process metadata |
 | macOS | Socket descriptors visible through Apple's `libproc` | `sysinfo` |
 
 Process permissions affect which owners and metadata PortSpy can read. On
 Linux, a socket can be listed without a visible owner. On macOS, sockets
 whose file descriptors cannot be inspected may be absent from the list.
+PortSpy supports process termination on Windows and Linux. On macOS, the
+CLI and TUI can list and inspect sockets, and process termination is unavailable.
 
 ---
 

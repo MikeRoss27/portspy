@@ -127,17 +127,17 @@ impl StopPlan {
         report
     }
 
-    /// Counts reviewed port/protocol pairs with no listener in the latest scan.
+    /// Counts reviewed port/protocol pairs with no visible listener in the latest scan.
     ///
-    /// An occupied port is still reported even when another process or bind
-    /// address took over the numeric port for the same protocol.
+    /// A visible listener still counts when another process or bind address
+    /// took over the same pair. Scan visibility may depend on permissions.
     pub fn port_counts(&self, snapshot: &SystemSnapshot) -> (usize, usize) {
         let ports: HashSet<_> = self
             .listeners
             .iter()
             .map(|id| (id.protocol, id.port))
             .collect();
-        let free = ports
+        let absent = ports
             .iter()
             .filter(|(protocol, port)| {
                 !snapshot
@@ -146,6 +146,6 @@ impl StopPlan {
                     .any(|listener| listener.protocol == *protocol && listener.port == *port)
             })
             .count();
-        (free, ports.len())
+        (absent, ports.len())
     }
 }

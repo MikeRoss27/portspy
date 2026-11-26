@@ -1,59 +1,22 @@
 //! Native socket and process discovery shared by Linux and macOS.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
 use portspy_core::domain::process::{ProcessId, ProcessIdentity};
 use portspy_core::platform::{KillOutcome, Platform, PlatformError, RawListener, RawProcess};
 use rustix::process::{Pid, Signal, kill_process};
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 #[cfg_attr(target_os = "linux", path = "unix/linux.rs")]
 #[cfg_attr(target_os = "macos", path = "unix/macos.rs")]
-mod sockets;
+mod native;
 
 pub(crate) struct UnixPlatform;
 
 impl Platform for UnixPlatform {
     fn listeners(&self) -> Result<Vec<RawListener>, PlatformError> {
-        sockets::listeners()
+        native::listeners()
     }
 
     fn processes(&self) -> Result<Vec<RawProcess>, PlatformError> {
-        let refresh = ProcessRefreshKind::nothing()
-            .with_memory()
-            .with_exe(UpdateKind::Always)
-            .with_cwd(UpdateKind::Always)
-            .with_cmd(UpdateKind::Always);
-        let mut system = System::new().map_err(|error| PlatformError::OperationFailed {
-            operation: "process discovery",
-            message: error.to_string(),
-        })?;
-        system.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
-
-        Ok(system
-            .processes()
-            .values()
-            .map(|process| {
-                let command_line: Vec<_> = process
-                    .cmd()
-                    .iter()
-                    .map(|arg| arg.to_string_lossy())
-                    .collect();
-                RawProcess {
-                    pid: ProcessId(process.pid().as_u32()),
-                    parent_pid: process.parent().map(|parent| ProcessId(parent.as_u32())),
-                    name: process.name().to_string_lossy().into_owned(),
-                    executable: process.exe().map(ToOwned::to_owned),
-                    command_line: (!command_line.is_empty()).then(|| command_line.join(" ")),
-                    working_directory: process.cwd().map(ToOwned::to_owned),
-                    started_at: i32::try_from(process.pid().as_u32())
-                        .ok()
-                        .and_then(process_start_time),
-                    memory_bytes: Some(process.memory()),
-                    cpu_percent: None,
-                }
-            })
-            .collect())
+        native::processes()
     }
 
     fn kill(&self, pid: ProcessId) -> Result<KillOutcome, PlatformError> {
@@ -71,7 +34,7 @@ impl Platform for UnixPlatform {
         let Some(target) = signal_target(pid)? else {
             return Ok(KillOutcome::AlreadyExited);
         };
-        kill_checked(target, identity)
+        native::kill_checked(target, identity)
     }
 }
 
@@ -97,58 +60,6 @@ fn signal_outcome(
             message: error.to_string(),
         }),
     }
-}
-
-#[cfg(target_os = "linux")]
-fn process_start_time(pid: i32) -> Option<SystemTime> {
-    let boot = procfs::boot_time_secs().ok()?;
-    let rate = procfs::ticks_per_second();
-    let stat = procfs::process::Process::new(pid).ok()?.stat().ok()?;
-    let elapsed_secs = stat.starttime.checked_div(rate)?;
-    let remaining_ticks = stat.starttime % rate;
-    let nanos = remaining_ticks.checked_mul(1_000_000_000)? / rate;
-    UNIX_EPOCH.checked_add(Duration::new(boot.checked_add(elapsed_secs)?, nanos as u32))
-}
-
-#[cfg(target_os = "macos")]
-fn process_start_time(pid: i32) -> Option<SystemTime> {
-    use libproc::bsd_info::BSDInfo;
-    use libproc::proc_pid::pidinfo;
-
-    let info = pidinfo::<BSDInfo>(pid, 0).ok()?;
-    if info.pbi_start_tvsec == 0 {
-        return None;
-    }
-    UNIX_EPOCH
-        .checked_add(Duration::from_secs(info.pbi_start_tvsec))?
-        .checked_add(Duration::from_micros(info.pbi_start_tvusec))
-}
-
-#[cfg(target_os = "linux")]
-fn kill_checked(target: Pid, identity: ProcessIdentity) -> Result<KillOutcome, PlatformError> {
-    use rustix::process::{PidfdFlags, pidfd_open, pidfd_send_signal};
-
-    // Open the process descriptor first, so PID reuse after the identity
-    // check cannot redirect the signal to another process.
-    let handle = match pidfd_open(target, PidfdFlags::empty()) {
-        Ok(handle) => handle,
-        Err(error) => return signal_outcome(identity.pid, Err(error)),
-    };
-    if process_start_time(target.as_raw_pid()) != identity.started_at {
-        return Err(PlatformError::IdentityChanged { pid: identity.pid });
-    }
-    signal_outcome(identity.pid, pidfd_send_signal(handle, Signal::KILL))
-}
-
-#[cfg(target_os = "macos")]
-fn kill_checked(target: Pid, identity: ProcessIdentity) -> Result<KillOutcome, PlatformError> {
-    if process_start_time(target.as_raw_pid()) != identity.started_at {
-        if rustix::process::test_kill_process(target) == Err(rustix::io::Errno::SRCH) {
-            return Ok(KillOutcome::AlreadyExited);
-        }
-        return Err(PlatformError::IdentityChanged { pid: identity.pid });
-    }
-    signal_outcome(identity.pid, kill_process(target, Signal::KILL))
 }
 
 #[cfg(test)]
@@ -207,18 +118,22 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn checked_stop_rejects_the_wrong_start_time() -> std::io::Result<()> {
+        use std::time::UNIX_EPOCH;
+
         let platform = crate::platform();
         let mut child = Command::new("/bin/sleep").arg("30").spawn()?;
         let pid = ProcessId(child.id());
         let identity = ProcessIdentity::new(pid, Some(UNIX_EPOCH));
         let stale = platform.kill_checked(identity);
         let survived = child.try_wait();
-        let valid = i32::try_from(pid.as_u32())
-            .ok()
-            .and_then(process_start_time);
-        let checked = platform.kill_checked(ProcessIdentity::new(pid, valid));
+        let checked = match std::thread::scope(|scope| scope.spawn(|| platform.process(pid)).join())
+        {
+            Ok(Ok(Some(process))) => platform.kill_checked(process.identity()),
+            _ => Err(PlatformError::IdentityChanged { pid }),
+        };
         if !matches!(checked, Ok(KillOutcome::Terminated)) {
             let _ = child.kill();
         }
@@ -226,6 +141,25 @@ mod tests {
         assert_eq!(stale, Err(PlatformError::IdentityChanged { pid }));
         assert!(survived?.is_none());
         assert_eq!(checked, Ok(KillOutcome::Terminated));
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn checked_stop_reports_unsupported_without_signaling_the_process() -> std::io::Result<()> {
+        let platform = crate::platform();
+        let mut child = Command::new("/bin/sleep").arg("30").spawn()?;
+        let pid = ProcessId(child.id());
+        let result = platform
+            .process(pid)
+            .and_then(|process| process.ok_or(PlatformError::IdentityChanged { pid }))
+            .and_then(|process| platform.kill_checked(process.identity()));
+        let survived = child.try_wait();
+        let _ = child.kill();
+        child.wait()?;
+
+        assert!(matches!(result, Err(PlatformError::Unsupported(_))));
+        assert!(survived?.is_none());
         Ok(())
     }
 }

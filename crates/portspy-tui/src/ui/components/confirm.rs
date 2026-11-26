@@ -74,10 +74,13 @@ pub fn overlay(frame: &mut Frame<'_>, area: Rect, state: &mut AppState) {
     state.stop_review_scroll = state
         .stop_review_scroll
         .min(u16::try_from(hidden_lines).unwrap_or(u16::MAX));
+    let scroll_help = " ↑↓ Review · y Stop · Esc Cancel ";
     let help = if hidden_lines == 0 {
         " y Stop · Esc Cancel "
+    } else if usize::from(width.saturating_sub(2)) < scroll_help.chars().count() {
+        " ↑↓ · y Stop · Esc Cancel "
     } else {
-        " ↑↓ Review · y Stop · Esc Cancel "
+        scroll_help
     };
     let popup = centered_rect(area, width, height);
     frame.render_widget(Clear, popup);
@@ -160,6 +163,17 @@ mod tests {
         assert!(content.contains(&format!("UDP {udp_addr} · PID 72")));
         assert!(content.contains("worker · PID 72"));
         assert!(content.contains("y Stop · Esc Cancel"));
+
+        let mut compact = Terminal::new(TestBackend::new(32, 8))?;
+        compact.draw(|frame| overlay(frame, frame.area(), &mut state))?;
+        let content: String = compact
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(content.contains("↑↓ · y Stop · Esc Cancel"));
         assert!(!can_review(22, 5));
         Ok(())
     }

@@ -11,8 +11,8 @@ use crate::platform::{KillOutcome, Platform, PlatformError};
 
 /// Kills a process and every one of its descendants, deepest first.
 ///
-/// Each process is terminated independently through [`Platform::kill`];
-/// a failure (access denied, exited) never aborts the remaining kills.
+/// Each process is terminated independently through [`Platform::kill_checked`];
+/// a failure (access denied, exited, or unavailable identity) never aborts the remaining kills.
 /// The owning process itself is killed last, after its children.
 ///
 /// # Errors
@@ -24,9 +24,18 @@ pub fn kill_tree<P: Platform + ?Sized>(
     processes: &[ProcessInfo],
     root: ProcessId,
 ) -> TreeKillReport {
+    let identities: HashMap<_, _> = processes
+        .iter()
+        .map(|process| (process.pid, process.identity()))
+        .collect();
     let mut report = TreeKillReport::default();
     for pid in kill_order(processes, root) {
-        match platform.kill(pid) {
+        let result = identities
+            .get(&pid)
+            .filter(|identity| identity.is_stable())
+            .ok_or(PlatformError::IdentityChanged { pid })
+            .and_then(|identity| platform.kill_checked(*identity));
+        match result {
             Ok(KillOutcome::Terminated) => report.terminated.push(pid),
             Ok(KillOutcome::AlreadyExited) => report.already_exited.push(pid),
             Err(error) => report.failed.push((pid, error)),
@@ -36,7 +45,7 @@ pub fn kill_tree<P: Platform + ?Sized>(
 }
 
 /// Ordered list of PIDs to terminate for a tree kill: descendants before
-/// their parents, deepest first, root last.
+/// their parents, deepest first, root last. Siblings are visited by ascending PID.
 ///
 /// Descendants are discovered by walking `parent_pid` links. Cycles and
 /// unknown parents are tolerated: a process is never visited twice and an
@@ -69,6 +78,9 @@ fn children_map(processes: &[ProcessInfo]) -> HashMap<ProcessId, Vec<ProcessId>>
             }
             map.entry(parent).or_default().push(process.pid);
         }
+    }
+    for siblings in map.values_mut() {
+        siblings.sort_unstable();
     }
     map
 }
@@ -131,9 +143,10 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::{TreeKillReport, kill_order, kill_tree};
-    use crate::domain::process::{ProcessId, ProcessInfo};
+    use crate::domain::process::{ProcessId, ProcessIdentity, ProcessInfo};
     use crate::platform::{KillOutcome, Platform, PlatformError, RawListener, RawProcess};
     use std::sync::Mutex;
+    use std::time::{Duration, UNIX_EPOCH};
 
     fn process(pid: u32, parent: Option<u32>) -> ProcessInfo {
         ProcessInfo {
@@ -143,16 +156,16 @@ mod tests {
             executable: None,
             command_line: None,
             working_directory: None,
-            started_at: None,
+            started_at: Some(UNIX_EPOCH + Duration::from_secs(u64::from(pid))),
             memory_bytes: None,
             cpu_percent: None,
             ancestors: Vec::new(),
         }
     }
 
-    /// Records every PID passed to `kill`, failing for a configurable set.
+    /// Records every identity passed to `kill_checked`, failing for a configurable set.
     struct RecordingPlatform {
-        killed: Mutex<Vec<ProcessId>>,
+        killed: Mutex<Vec<ProcessIdentity>>,
         denied: Vec<u32>,
     }
 
@@ -163,8 +176,12 @@ mod tests {
         fn processes(&self) -> Result<Vec<RawProcess>, PlatformError> {
             Ok(Vec::new())
         }
-        fn kill(&self, pid: ProcessId) -> Result<KillOutcome, PlatformError> {
-            self.killed.lock().expect("lock").push(pid);
+        fn kill(&self, _: ProcessId) -> Result<KillOutcome, PlatformError> {
+            unreachable!("raw PID termination")
+        }
+        fn kill_checked(&self, identity: ProcessIdentity) -> Result<KillOutcome, PlatformError> {
+            self.killed.lock().expect("lock").push(identity);
+            let pid = identity.pid;
             if self.denied.contains(&pid.as_u32()) {
                 Err(PlatformError::AccessDenied { pid })
             } else {
@@ -225,9 +242,15 @@ mod tests {
     }
 
     #[test]
-    fn kill_order_does_not_follow_a_recycled_parent_pid() {
-        use std::time::{Duration, UNIX_EPOCH};
+    fn kill_order_is_independent_of_snapshot_order() {
+        let mut processes = tree();
+        let expected = kill_order(&processes, ProcessId(1));
+        processes.reverse();
+        assert_eq!(kill_order(&processes, ProcessId(1)), expected);
+    }
 
+    #[test]
+    fn kill_order_does_not_follow_a_recycled_parent_pid() {
         let mut parent = process(1, None);
         parent.started_at = Some(UNIX_EPOCH + Duration::from_secs(2));
         let mut child = process(2, Some(1));
@@ -252,7 +275,8 @@ mod tests {
         assert!(report.summary().contains("5 killed"));
         // Everything was attempted exactly once, root last.
         assert_eq!(killed.len(), 6);
-        assert_eq!(killed.last().unwrap().as_u32(), 1);
+        assert_eq!(killed.last(), Some(&tree()[0].identity()));
+        assert!(killed.iter().all(ProcessIdentity::is_stable));
     }
 
     #[test]
@@ -274,5 +298,24 @@ mod tests {
         let report = TreeKillReport::default();
         assert_eq!(report.total(), 0);
         assert_eq!(report.summary(), "0 processes");
+    }
+
+    #[test]
+    fn kill_tree_does_not_signal_a_pid_without_its_creation_time() {
+        let platform = RecordingPlatform {
+            killed: Mutex::new(Vec::new()),
+            denied: Vec::new(),
+        };
+        let pid = ProcessId(1);
+        let mut root = process(1, None);
+        root.started_at = None;
+
+        let report = kill_tree(&platform, &[root], pid);
+
+        assert_eq!(
+            report.failed,
+            [(pid, PlatformError::IdentityChanged { pid })]
+        );
+        assert!(platform.killed.lock().expect("lock").is_empty());
     }
 }

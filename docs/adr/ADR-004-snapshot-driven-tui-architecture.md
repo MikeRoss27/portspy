@@ -29,8 +29,11 @@ Three pillars:
    through `apply(Action)`, which makes the state machine testable without a
    terminal.
 
-Kill flows through the `Platform` trait; errors (access denied, already
-exited) surface as footer notifications, never as crashes.
+After confirmation, a worker collects a fresh snapshot, compares it with the
+reviewed scope, and stops the reviewed processes through the `Platform` trait
+when the scope matches. The UI can continue handling input and rendering while
+the worker runs. The worker returns the outcome through the message channel
+for display in the footer.
 
 ## Consequences
 

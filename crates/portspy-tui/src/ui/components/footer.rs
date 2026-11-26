@@ -10,14 +10,22 @@ use crate::ui::theme::Theme;
 /// Renders the key hints or most recent action feedback.
 pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     let theme = Theme::default();
-    if let Some(notification) = &state.notification
-        && matches!(state.mode, AppMode::Browse | AppMode::Inspect)
-    {
-        frame.render_widget(
-            Paragraph::new(format!(" {}", notification.message)).style(theme.accent_text()),
-            area,
-        );
-        return;
+    if matches!(state.mode, AppMode::Browse | AppMode::Inspect) {
+        let feedback = if state.stop_in_progress() {
+            Some("Stop in progress")
+        } else {
+            state
+                .notification
+                .as_ref()
+                .map(|notification| notification.message.as_str())
+        };
+        if let Some(feedback) = feedback {
+            frame.render_widget(
+                Paragraph::new(format!(" {feedback}")).style(theme.accent_text()),
+                area,
+            );
+            return;
+        }
     }
 
     let compact = area.width < 64;

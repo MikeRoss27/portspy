@@ -21,7 +21,6 @@ windows.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 rustix = { version = "1.1.6", features = ["process"] }
-sysinfo = { version = "0.40.4", default-features = false, features = ["system"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 procfs = { version = "0.18", default-features = false }
@@ -29,6 +28,7 @@ procfs = { version = "0.18", default-features = false }
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
 libproc = "0.15"
+sysinfo = { version = "0.40.4", default-features = false, features = ["system"] }
 
 # The platform crate is the only place where native Windows APIs are touched.
 # Unsafe code is allowed here and nowhere else in the workspace. All other

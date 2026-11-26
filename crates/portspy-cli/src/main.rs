@@ -14,6 +14,7 @@ mod output;
 
 use clap::Parser;
 use portspy_core::snapshot::builder::SnapshotBuilder;
+use std::fs::File;
 use std::path::PathBuf;
 
 use args::{Cli, Command};
@@ -55,9 +56,8 @@ fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-/// Enables `tracing` when `PORTSPY_LOG` is set.
-/// Logs go to stderr and to a rotating file in %LOCALAPPDATA%\PortSpy\logs\.
-/// This keeps the terminal interface and JSON output clean on stdout.
+/// Sends logs to stderr and, when available, to a daily log file.
+/// `PORTSPY_LOG` overrides the default filter.
 fn init_tracing() -> Result<(), anyhow::Error> {
     use tracing_subscriber::{
         EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt,
@@ -71,30 +71,37 @@ fn init_tracing() -> Result<(), anyhow::Error> {
         .with_ansi(false)
         .with_filter(filter.clone());
 
-    // File layer - for persistent debugging
-    let file_layer = {
-        let log_dir = log_directory()?;
-        std::fs::create_dir_all(&log_dir)?;
-        let date = time::OffsetDateTime::now_local()
-            .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
-            .format(time::macros::format_description!("[year][month][day]"))?;
-        let file_path = log_dir.join(format!("portspy-{date}.log"));
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(file_path)?;
+    let (file, file_error) = match open_log_file() {
+        Ok(file) => (Some(file), None),
+        Err(error) => (None, Some(error)),
+    };
+    let file_layer = file.map(|file| {
         fmt::layer()
             .with_writer(file)
             .with_ansi(false)
             .with_filter(filter)
-    };
+    });
 
     tracing_subscriber::registry()
         .with(console_layer)
         .with(file_layer)
         .try_init()?;
 
+    if let Some(error) = file_error {
+        tracing::warn!(%error, "Could not open log file");
+    }
+
     Ok(())
+}
+
+fn open_log_file() -> Result<File, anyhow::Error> {
+    let log_dir = log_directory()?;
+    std::fs::create_dir_all(&log_dir)?;
+    let date = time::OffsetDateTime::now_local()
+        .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+        .format(time::macros::format_description!("[year][month][day]"))?;
+    let file_path = log_dir.join(format!("portspy-{date}.log"));
+    Ok(File::options().create(true).append(true).open(file_path)?)
 }
 
 /// Returns the log directory: %LOCALAPPDATA%\PortSpy\logs\ on Windows,

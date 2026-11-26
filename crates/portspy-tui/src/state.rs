@@ -65,6 +65,7 @@ pub struct AppState {
     pub stop_plan: Option<StopPlan>,
     /// First visible line of the stop review.
     pub stop_review_scroll: u16,
+    stop_in_progress: bool,
     pending_stop_feedback: Option<StopFeedback>,
     stop_return_mode: AppMode,
     pub table_state: ratatui::widgets::TableState,
@@ -87,6 +88,7 @@ impl Default for AppState {
             notification: None,
             stop_plan: None,
             stop_review_scroll: 0,
+            stop_in_progress: false,
             pending_stop_feedback: None,
             stop_return_mode: AppMode::Browse,
             table_state: ratatui::widgets::TableState::default(),
@@ -175,6 +177,9 @@ impl AppState {
     }
 
     fn request_stop(&mut self, tree: bool) {
+        if self.stop_in_progress {
+            return;
+        }
         let Some(selected) = self.selected else {
             return;
         };
@@ -207,7 +212,27 @@ impl AppState {
         self.notification = Some(Notification::new(reason));
     }
 
+    pub(crate) fn begin_stop(&mut self) -> Option<StopPlan> {
+        if self.stop_in_progress || self.mode != AppMode::ConfirmKill {
+            return None;
+        }
+        let plan = self.stop_plan.take()?;
+        self.apply(crate::input::actions::Action::ConfirmKill);
+        self.stop_in_progress = true;
+        Some(plan)
+    }
+
+    pub(crate) const fn stop_in_progress(&self) -> bool {
+        self.stop_in_progress
+    }
+
+    pub(crate) fn stop_validation_failed(&mut self, reason: impl Into<String>) {
+        self.stop_in_progress = false;
+        self.cancel_stop(reason);
+    }
+
     pub(crate) fn report_stop(&mut self, plan: StopPlan, report: TreeKillReport) {
+        self.stop_in_progress = false;
         let outcome = if plan.tree {
             report.failed.first().map_or_else(
                 || report.summary(),
@@ -321,17 +346,17 @@ impl AppState {
             .is_some_and(|feedback| snapshot.captured_at >= feedback.after)
             && let Some(feedback) = self.pending_stop_feedback.take()
         {
-            let (free, total) = feedback.plan.port_counts(&snapshot);
-            let ports = match (free, total) {
+            let (unobserved, total) = feedback.plan.port_counts(&snapshot);
+            let ports = match (unobserved, total) {
                 (1, 1) => format!(
-                    "{} :{} free",
+                    "{} :{} has no visible listener",
                     feedback.plan.target.protocol, feedback.plan.target.port
                 ),
                 (0, 1) => format!(
                     "{} :{} still occupied",
                     feedback.plan.target.protocol, feedback.plan.target.port
                 ),
-                _ => format!("{free}/{total} ports free"),
+                _ => format!("{unobserved}/{total} ports have no visible listener"),
             };
             self.notification = Some(Notification::new(format!("{} · {ports}", feedback.outcome)));
         }
@@ -745,7 +770,8 @@ mod tests {
     }
 
     #[test]
-    fn only_a_post_stop_scan_can_report_the_port_free() -> std::io::Result<()> {
+    fn only_a_post_stop_scan_can_report_that_a_listener_is_no_longer_visible() -> std::io::Result<()>
+    {
         use portspy_core::processes::tree::TreeKillReport;
 
         let socket = TcpListener::bind("127.0.0.1:0")?;
@@ -779,7 +805,41 @@ mod tests {
                 .notification
                 .expect("notification")
                 .message
-                .contains("free")
+                .contains("has no visible listener")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stop_feedback_counts_only_ports_with_no_visible_listener() -> std::io::Result<()> {
+        use portspy_core::processes::tree::TreeKillReport;
+
+        let first = TcpListener::bind("127.0.0.1:0")?;
+        let second = TcpListener::bind("127.0.0.1:0")?;
+        let port = first.local_addr()?.port();
+        let other_port = second.local_addr()?.port();
+        let mut state = state_with(&[port]);
+        let owner = state.snapshot.listeners[0].pid().as_u32();
+        state.snapshot.listeners.push(listener(other_port, owner));
+        state.apply(Action::MoveDown);
+        state.apply(Action::RequestKill);
+        let plan = state.begin_stop().expect("review");
+        let report = TreeKillReport {
+            terminated: vec![plan.process.identity.pid],
+            ..Default::default()
+        };
+        state.report_stop(plan, report);
+
+        let mut fresh = state.snapshot.clone();
+        fresh.listeners = vec![listener(other_port, owner + 1)];
+        fresh.captured_at = Instant::now();
+        state.refresh_with(fresh);
+        assert!(
+            state
+                .notification
+                .expect("notification")
+                .message
+                .contains("1/2 ports have no visible listener")
         );
         Ok(())
     }

@@ -30,7 +30,7 @@ pub fn spawn(
     thread::Builder::new()
         .name("portspy-collector".to_owned())
         .spawn(move || {
-            let builder = SnapshotBuilder::new(platform.as_ref());
+            let mut builder = SnapshotBuilder::new(platform.as_ref());
             loop {
                 let snapshot = builder.snapshot();
                 match snapshot {

@@ -87,8 +87,9 @@ pub fn sort_listener_refs<'s, 'a>(
 
 /// Filters listeners by a case-insensitive substring query.
 ///
-/// Searchable fields: port, application, process name, origin, PID and
-/// command line. An empty query matches everything.
+/// Searchable fields include the port, protocol, application, project,
+/// origin, process name, PID and command line. An empty query matches
+/// everything.
 pub fn search<'a>(listeners: &'a [Listener], query: &str) -> Vec<&'a Listener> {
     let needle = query.trim().to_lowercase();
     if needle.is_empty() {
@@ -97,11 +98,19 @@ pub fn search<'a>(listeners: &'a [Listener], query: &str) -> Vec<&'a Listener> {
     listeners
         .iter()
         .filter(|l| {
-            l.port.to_string().contains(&needle)
+            let port = l.port.to_string();
+            port.contains(&needle)
+                || needle
+                    .strip_prefix(':')
+                    .is_some_and(|prefix| !prefix.is_empty() && port.starts_with(prefix))
                 || l.application.label.to_lowercase().contains(&needle)
                 || l.process.name.to_lowercase().contains(&needle)
                 || l.origin.label.to_lowercase().contains(&needle)
                 || l.pid().to_string().contains(&needle)
+                || l.protocol.as_str().contains(&needle)
+                || l.project
+                    .name()
+                    .is_some_and(|n| n.to_lowercase().contains(&needle))
                 || l.process
                     .command_line
                     .as_deref()
@@ -111,8 +120,25 @@ pub fn search<'a>(listeners: &'a [Listener], query: &str) -> Vec<&'a Listener> {
 }
 
 /// Finds a listener by port in the latest snapshot.
+///
+/// When several protocols listen on the same port, the first match wins
+/// (snapshot order: TCP IPv4, TCP IPv6, UDP IPv4, UDP IPv6).
 pub fn find_by_port(listeners: &[Listener], port: u16) -> Option<&Listener> {
     listeners.iter().find(|l| l.port == port)
+}
+
+/// Finds a listener by port and protocol in the latest snapshot.
+///
+/// Use this when the caller must not be ambiguous about which socket is
+/// meant (e.g. `portspy inspect/kill` on a port shared by TCP and UDP).
+pub fn find_by_port_and_protocol(
+    listeners: &[Listener],
+    port: u16,
+    protocol: crate::domain::protocol::Protocol,
+) -> Option<&Listener> {
+    listeners
+        .iter()
+        .find(|l| l.port == port && l.protocol == protocol)
 }
 
 /// Stable display index of a listener id within a sorted list.
@@ -140,13 +166,14 @@ fn origin_rank(kind: OriginKind) -> u8 {
         OriginKind::Codex => 0,
         OriginKind::ClaudeCode => 1,
         OriginKind::Cursor => 2,
-        OriginKind::VsCode => 3,
-        OriginKind::WindowsTerminal => 4,
-        OriginKind::PowerShell => 5,
-        OriginKind::Cmd => 6,
-        OriginKind::Wsl => 7,
-        OriginKind::Docker => 8,
-        OriginKind::Unknown => 9,
+        OriginKind::Zed => 3,
+        OriginKind::VsCode => 4,
+        OriginKind::WindowsTerminal => 5,
+        OriginKind::PowerShell => 6,
+        OriginKind::Cmd => 7,
+        OriginKind::Wsl => 8,
+        OriginKind::Docker => 9,
+        OriginKind::Unknown => 10,
     }
 }
 
@@ -154,7 +181,7 @@ fn origin_rank(kind: OriginKind) -> u8 {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::{search, sort_listeners, SortField, SortOrder};
+    use super::{SortField, SortOrder, find_by_port_and_protocol, search, sort_listeners};
     use crate::domain::application::{ApplicationInfo, ApplicationKind};
     use crate::domain::confidence::Confidence;
     use crate::domain::listener::{Listener, ListenerId};
@@ -164,6 +191,19 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
 
     fn listener(
+        port: u16,
+        pid: u32,
+        name: &str,
+        memory: Option<u64>,
+        application: ApplicationKind,
+        origin: OriginKind,
+    ) -> Listener {
+        listener_for(Protocol::Tcp, port, pid, name, memory, application, origin)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn listener_for(
+        protocol: Protocol,
         port: u16,
         pid: u32,
         name: &str,
@@ -184,8 +224,14 @@ mod tests {
             ancestors: Vec::new(),
         };
         Listener {
-            id: ListenerId::new(Protocol::Tcp, IpAddr::V4(Ipv4Addr::LOCALHOST), port, ProcessId(pid), None),
-            protocol: Protocol::Tcp,
+            id: ListenerId::new(
+                protocol,
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port,
+                ProcessId(pid),
+                None,
+            ),
+            protocol,
             address: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port,
             process,
@@ -195,14 +241,38 @@ mod tests {
                 Confidence::High,
             ),
             origin: OriginInfo::new(origin, origin.label().to_owned(), Confidence::High, None),
+            project: crate::domain::project::ProjectInfo::default(),
+            is_duplicate: false,
+            is_orphan: false,
         }
     }
 
     fn fixture() -> Vec<Listener> {
         vec![
-            listener(3000, 1, "node.exe", Some(100), ApplicationKind::NextJs, OriginKind::Codex),
-            listener(5173, 2, "node.exe", Some(200), ApplicationKind::Vite, OriginKind::Cursor),
-            listener(5432, 3, "postgres.exe", Some(300), ApplicationKind::PostgreSql, OriginKind::Docker),
+            listener(
+                3000,
+                1,
+                "node.exe",
+                Some(100),
+                ApplicationKind::NextJs,
+                OriginKind::Codex,
+            ),
+            listener(
+                5173,
+                2,
+                "node.exe",
+                Some(200),
+                ApplicationKind::Vite,
+                OriginKind::Cursor,
+            ),
+            listener(
+                5432,
+                3,
+                "postgres.exe",
+                Some(300),
+                ApplicationKind::PostgreSql,
+                OriginKind::Docker,
+            ),
         ]
     }
 
@@ -225,7 +295,14 @@ mod tests {
     #[test]
     fn memory_unknown_sorts_first_ascending() {
         let mut data = fixture();
-        data.push(listener(9999, 4, "weird.exe", None, ApplicationKind::Unknown, OriginKind::Unknown));
+        data.push(listener(
+            9999,
+            4,
+            "weird.exe",
+            None,
+            ApplicationKind::Unknown,
+            OriginKind::Unknown,
+        ));
         let sorted = sort_listeners(&data, SortField::Memory, SortOrder::Ascending);
         assert_eq!(sorted.first().expect("non-empty").port, 9999);
     }
@@ -235,7 +312,14 @@ mod tests {
         let data = fixture();
         let sorted = sort_listeners(&data, SortField::Application, SortOrder::Ascending);
         let apps: Vec<ApplicationKind> = sorted.iter().map(|l| l.application.kind).collect();
-        assert_eq!(apps, [ApplicationKind::NextJs, ApplicationKind::Vite, ApplicationKind::PostgreSql]);
+        assert_eq!(
+            apps,
+            [
+                ApplicationKind::NextJs,
+                ApplicationKind::Vite,
+                ApplicationKind::PostgreSql
+            ]
+        );
     }
 
     #[test]
@@ -247,6 +331,31 @@ mod tests {
     fn search_matches_application_and_origin_labels() {
         assert_eq!(search(&fixture(), "next").len(), 1);
         assert_eq!(search(&fixture(), "cursor").len(), 1);
+    }
+
+    #[test]
+    fn finds_listener_by_project_origin_or_displayed_port() -> std::io::Result<()> {
+        use crate::domain::project::{ProjectInfo, ProjectKind};
+
+        let socket = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let port = socket.local_addr()?.port();
+        let mut data = [listener(
+            port,
+            1,
+            "node",
+            None,
+            ApplicationKind::NextJs,
+            OriginKind::ClaudeCode,
+        )];
+        data[0].project =
+            ProjectInfo::new(ProjectKind::Named("atlas-web".to_owned()), Confidence::High);
+
+        for query in ["ATLAS-WEB", "Claude Code", &format!(":{port}")] {
+            assert_eq!(search(&data, query), [&data[0]]);
+        }
+        assert!(search(&data, "atlas-api").is_empty());
+        assert!(search(&data, ":").is_empty());
+        Ok(())
     }
 
     #[test]
@@ -270,5 +379,24 @@ mod tests {
     #[test]
     fn no_match_yields_empty() {
         assert!(search(&fixture(), "zzz-not-there").is_empty());
+    }
+
+    #[test]
+    fn find_by_port_and_protocol_disambiguates_shared_port() {
+        let mut data = fixture();
+        data.push(listener_for(
+            Protocol::Udp,
+            3000,
+            9,
+            "node.exe",
+            None,
+            ApplicationKind::Node,
+            OriginKind::Unknown,
+        ));
+        let udp = find_by_port_and_protocol(&data, 3000, Protocol::Udp).expect("udp match");
+        assert_eq!(udp.pid(), ProcessId(9));
+        let tcp = find_by_port_and_protocol(&data, 3000, Protocol::Tcp).expect("tcp match");
+        assert_eq!(tcp.pid(), ProcessId(1));
+        assert!(find_by_port_and_protocol(&data, 9999, Protocol::Udp).is_none());
     }
 }

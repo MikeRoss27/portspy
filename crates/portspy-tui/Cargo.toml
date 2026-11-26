@@ -9,8 +9,8 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-portspy-core = { path = "../portspy-core" }
-ratatui.workspace = true
+portspy-core = { version = "0.1.0", path = "../portspy-core" }
+ratatui = { workspace = true, features = ["unstable-rendered-line-info"] }
 crossterm.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

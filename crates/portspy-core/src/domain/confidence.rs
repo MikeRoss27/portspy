@@ -9,14 +9,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Confidence {
-    /// Direct, unambiguous evidence (exact executable name match).
-    Exact,
-    /// Strong but not conclusive evidence (ancestor matches a known origin).
-    High,
-    /// Plausible evidence (generic runtime with a known command line).
-    Medium,
-    /// Weak evidence (path substring, fuzzy match).
-    Low,
     /// No evidence at all; this is a fallback value, not a detection.
     Unknown,
+    /// Weak evidence (path substring, fuzzy match).
+    Low,
+    /// Plausible evidence (generic runtime with a known command line).
+    Medium,
+    /// Strong but not conclusive evidence (ancestor matches a known origin).
+    High,
+    /// Direct, unambiguous evidence (exact executable name match).
+    Exact,
 }

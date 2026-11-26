@@ -1,22 +1,46 @@
-//! Footer: one-line context-sensitive key hints.
+//! Footer: context-sensitive key hints and feedback.
 
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::widgets::Paragraph;
 
 use crate::state::{AppMode, AppState};
 use crate::ui::theme::Theme;
 
-/// Renders the single-line footer with hints for the current mode.
+/// Renders the key hints or most recent action feedback.
 pub fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     let theme = Theme::default();
+    if matches!(state.mode, AppMode::Browse | AppMode::Inspect) {
+        let feedback = if state.stop_in_progress() {
+            Some("Stop in progress")
+        } else {
+            state
+                .notification
+                .as_ref()
+                .map(|notification| notification.message.as_str())
+        };
+        if let Some(feedback) = feedback {
+            frame.render_widget(
+                Paragraph::new(format!(" {feedback}")).style(theme.accent_text()),
+                area,
+            );
+            return;
+        }
+    }
+
+    let compact = area.width < 64;
     let hints = match state.mode {
-        AppMode::Browse => "↑/↓ move · j/k vim · Enter inspect · / search · r sort · o order · x kill · q quit",
-        AppMode::Inspect => "←/Esc back · q quit",
-        AppMode::Search => "type to filter · ← backspace · Esc clear",
-        AppMode::ConfirmKill => "y confirm kill · n cancel",
+        AppMode::Browse if compact => "↵ Inspect  / Find  r Recent  u Owners  x Stop",
+        AppMode::Browse => {
+            "↑↓ Select  ↵ Inspect  / Find  r Recent  u Owners  x Stop  X Tree  q Quit"
+        }
+        AppMode::Inspect if compact => "Esc Back  Pg↑↓ Scroll  x Stop  X Tree",
+        AppMode::Inspect => "Esc Back  Pg↑↓ Scroll  x Stop  X Stop tree  q Quit",
+        AppMode::Search => "↑↓ Select result  ↵ Inspect  Esc Clear",
+        AppMode::ConfirmKill => "y Stop  Esc Cancel  ↑↓ Review",
     };
-    let line = Line::from(vec![Span::styled(format!(" {hints} "), theme.footer_hint())]);
-    frame.render_widget(Paragraph::new(line), area);
+    frame.render_widget(
+        Paragraph::new(format!(" {hints}")).style(theme.footer_hint()),
+        area,
+    );
 }

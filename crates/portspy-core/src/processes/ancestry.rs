@@ -37,7 +37,9 @@ pub struct AncestryBuilder {
 impl AncestryBuilder {
     /// Creates a builder from a bulk process snapshot.
     pub fn new(processes: impl IntoIterator<Item = ProcessInfo>) -> Self {
-        Self { by_pid: processes.into_iter().map(|p| (p.pid, p)).collect() }
+        Self {
+            by_pid: processes.into_iter().map(|p| (p.pid, p)).collect(),
+        }
     }
 
     /// Number of known processes.
@@ -63,8 +65,15 @@ impl AncestryBuilder {
 
         let mut current = pid;
         for _ in 0..MAX_ANCESTRY_DEPTH {
-            let Some(process) = self.by_pid.get(&current) else { break };
-            let Some(parent) = process.parent_pid else { break };
+            let Some(process) = self.by_pid.get(&current) else {
+                break;
+            };
+            let Some(parent) = process.parent_pid else {
+                break;
+            };
+            if parent == ProcessId(0) {
+                break;
+            }
             if !seen.insert(parent) {
                 // Cycle in parent pointers (corrupted snapshot or a PID
                 // recycled mid-collection). Stop before looping forever.
@@ -203,5 +212,15 @@ mod tests {
         let builder = AncestryBuilder::new(tree);
         let ancestry = builder.ancestry(ProcessId(0));
         assert!(ancestry.chain.len() <= MAX_ANCESTRY_DEPTH);
+    }
+
+    #[test]
+    fn pid_zero_parent_does_not_insert_placeholder() {
+        // If a process has parent_pid = Some(ProcessId(0)), the chain should
+        // stop without inserting "<0>".
+        let tree = vec![process(13, Some(0), "node.exe")];
+        let builder = AncestryBuilder::new(tree);
+        let ancestry = builder.ancestry(ProcessId(13));
+        assert!(ancestry.chain.is_empty());
     }
 }

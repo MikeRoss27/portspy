@@ -32,13 +32,11 @@ No wondering which AI coding agent started yet another dev server.
 ## Status
 
 > [!NOTE]
-> The full `v0.1` feature set is implemented: 93 tests green (core + TUI), `cargo clippy --all-targets` clean. The remaining release gates are validation on a real Windows machine (listener discovery, PID resolution, tool detection) and packaging — tracked in `docs/devplan.md`.
+> PortSpy is in pre-release. CI is configured for Windows, Linux and macOS.
+> The standalone GitHub Release workflow currently packages Windows x64.
 
-`v0.1` does one thing and does it well:
-
-**discover local TCP listeners → identify their process and origin → inspect them → kill them from a clean TUI.**
-
-Windows 11 is the primary target for the first release.
+PortSpy discovers local TCP listeners and bound UDP sockets, identifies their
+process and origin, and lets you inspect or stop them from the terminal.
 
 ---
 
@@ -51,6 +49,7 @@ A single project can involve:
 - Codex
 - Claude Code
 - Cursor
+- Zed
 - VS Code
 - Windows Terminal
 - PowerShell
@@ -127,40 +126,26 @@ The useful answer comes first.
 
 ## TUI
 
-The interface is intentionally minimal.
+The listener list puts the port, project, origin and network binding together.
 
 ```text
- portspy  BROWSE  8 listening · 12 total              2.1 GB · 12m
+ portspy  All listeners  ·  1 new
+ 3/3 shown  ·  port ↑
 
- PORT     APP       ORIGIN       PID     PROCESS      MEM     UPTIME
- :3000    Next.js   Codex        18432   node.exe     612 MB  12m
- :3001    Next.js   Claude Code  20144   node.exe     584 MB   8m
- :5173    Vite      Cursor       5120    node.exe     321 MB   1h
- :5432    PostgreSQL Docker      9812    postgres.exe 148 MB  4h
- :8000    Python    PowerShell   9021    python.exe   96 MB   5m
+   PORT       APP       PROJECT     ORIGIN        BINDING
+ › :3000 TCP  Next.js   atlas-web   Codex         Loopback
+   :3001 TCP  Next.js   atlas-web   Claude Code   Loopback
+   :5173 TCP  Vite      studio      VS Code       All interfaces
 
-
- ↑/↓ move · j/k vim · Enter inspect · / search · s sort · S order · x kill · q quit
+ ↑↓ Select  ↵ Inspect  / Find  r Recent  u Owners  x Stop  X Tree  q Quit
 ```
 
-Inspecting an entry opens the same list on the left and a details split on the right:
+At 96 columns and wider, the inspector opens beside the list. It brings the
+origin and its matched process to the top, along with the address and binding.
 
-```text
- PORT     APP       ORIGIN       PID     │ Next.js
- :3000    Next.js   Codex        18432   │
- :3001    Next.js   Claude Code  20144   │ listener  :3000 (tcp)
- :5173    Vite      Cursor       5120    │ address   127.0.0.1:3000
- :5432    PostgreSQL Docker      9812    │ process   node.exe
- :8000    Python    PowerShell   9021    │ pid       18432
-                                         │ memory    612 MB
-                                         │ uptime    12m
-                                         │ command   pnpm dev
-                                         │ cwd       C:\dev\my-app
-                                         │
-                                         │ ├── node.exe (pid 18432)
-                                         │ ├── codex.exe (pid 15320)
-                                         │ └── pwsh.exe (pid 9124)
-```
+In a narrow terminal, inspection uses the full width. Press `Esc` to return
+to the list with your selection and filter intact. Page Up and Page Down
+scroll long details.
 
 The interface is designed around:
 
@@ -179,7 +164,7 @@ The interface is designed around:
 
 ### Port discovery
 
-PortSpy discovers local listening TCP sockets and associates them with their owning processes.
+PortSpy discovers local listening TCP and UDP sockets and associates them with their owning processes.
 
 The first release targets:
 
@@ -305,23 +290,11 @@ Initial detection targets include:
 
 When a framework cannot be identified reliably, PortSpy falls back to the runtime or raw executable.
 
-### Kill processes
+### Stop processes
 
-Processes can be stopped directly from the TUI.
-
-```text
-Kill Next.js :3000 (PID 18432)?
-
-y confirm · n cancel · Esc cancel
-```
-
-`x` requests the kill on the selected listener; confirmation is always explicit.
-
-PortSpy does not silently kill processes merely because they look unnecessary.
-
-Destructive actions require explicit user intent.
-
-Elevated or protected Windows processes refuse termination at the operating-system level; PortSpy reports the failure cleanly as an access error instead of crashing.
+`x` reviews stopping the owner of the selected listener. `X` includes its
+descendants. Review the processes and affected endpoints, then press `y` to
+stop or `Esc` to cancel. PortSpy checks the target again before stopping it.
 
 ### Search
 
@@ -337,8 +310,20 @@ Searchable fields include:
 - application
 - process
 - origin
+- project
+- protocol
 - PID
 - command line
+
+### Recently opened
+
+Press `r` to show sockets that are still open and first appeared after the
+initial scan. The view keeps updating as you work. Press `r` again to return
+to all listeners.
+
+Press `u` to hide or show sockets whose owning PID is unavailable. The header
+keeps a count of those sockets. The wide table also shows each bind address,
+so different addresses on the same port can be distinguished.
 
 ### Sorting
 
@@ -378,7 +363,9 @@ portspy list                 # table of local listeners
 portspy list --json          # machine-readable output
 portspy inspect 3000         # details for the process behind :3000
 portspy inspect 3000 --json
+portspy inspect 3000 --protocol udp   # disambiguate a port shared by TCP+UDP
 portspy kill 3000            # confirmation prompt (--yes to skip)
+portspy kill 3000 --protocol udp --yes
 ```
 
 Example `list --json` output:
@@ -450,10 +437,12 @@ Operating-system integration.
 The Windows implementation is responsible for things such as:
 
 - TCP listener discovery
+- UDP listener discovery
 - PID ownership
 - process metadata
 - process creation times
 - parent processes
+- working directories (PEB)
 - memory information
 - process termination
 
@@ -598,26 +587,19 @@ A new crate should only exist when there is a real architectural boundary that j
 
 ---
 
-## Windows implementation
+## Platform support
 
-PortSpy is Windows-first.
+| Platform | Socket discovery | Process metadata |
+| --- | --- | --- |
+| Windows 11 | Windows IP Helper API | Win32 process APIs |
+| Linux | `/proc` socket tables in the current network namespace | `/proc` process metadata |
+| macOS | Socket descriptors visible through Apple's `libproc` | `sysinfo` |
 
-TCP listener discovery is designed around native Windows networking APIs such as:
-
-```text
-GetExtendedTcpTable
-```
-
-Process metadata is collected through appropriate Win32 APIs.
-
-The first target is:
-
-```text
-Windows 11
-x86_64-pc-windows-msvc
-```
-
-WSL2 awareness will progressively improve after the initial Windows foundation is stable.
+Process permissions affect which owners and metadata PortSpy can read. On
+Linux, a socket can be listed without a visible owner. On macOS, sockets
+whose file descriptors cannot be inspected may be absent from the list.
+PortSpy supports process termination on Windows and Linux. On macOS, the
+CLI and TUI can list and inspect sockets, and process termination is unavailable.
 
 ---
 
@@ -645,10 +627,9 @@ At least not yet.
 
 ### Requirements
 
-- Windows 11
-- Rust stable
-- Visual Studio Build Tools / MSVC toolchain
-- Git
+- Rust 1.95 or newer and Git
+- Windows 11 with Visual Studio Build Tools for MSVC, a Linux host with a
+  native linker, or macOS with Xcode Command Line Tools
 
 Verify:
 
@@ -660,26 +641,26 @@ cargo --version
 Clone the repository:
 
 ```bash
-git clone https://github.com/<org-or-user>/portspy.git
+git clone https://github.com/MikeRoss27/portspy.git
 cd portspy
 ```
 
 Build:
 
 ```bash
-cargo build --workspace
+cargo build --workspace --locked
 ```
 
 Run:
 
 ```bash
-cargo run -p portspy-cli
+cargo run --locked -p portspy-cli
 ```
 
 Release build:
 
 ```bash
-cargo build --release
+cargo build --release --locked
 ```
 
 ---
@@ -789,6 +770,7 @@ PortSpy should degrade gracefully rather than panic.
 The first usable release.
 
 - [x] Windows TCP listener discovery
+- [x] Windows UDP listener discovery
 - [x] IPv4
 - [x] IPv6
 - [x] PID resolution
@@ -813,20 +795,20 @@ The first usable release.
 - [x] process kill
 - [x] kill confirmation
 - [x] JSON output
-- [ ] Windows CI
-- [ ] standalone release binary
+- [x] Windows CI
+- [x] standalone release packaging
 
 ### `v0.2`
 
 Deeper process intelligence.
 
-- [ ] UDP listeners
-- [ ] process-tree termination
+- [x] UDP listeners
+- [x] process-tree termination
 - [ ] improved WSL2 attribution
-- [ ] project detection
-- [ ] working-directory detection improvements
-- [ ] duplicate dev-server detection
-- [ ] orphan process detection
+- [x] project detection
+- [x] working-directory detection (PEB-based)
+- [x] duplicate dev-server detection
+- [x] orphan process detection
 - [ ] improved runtime detection
 
 ### `v0.3`
@@ -858,8 +840,8 @@ Long-term direction.
 - [ ] stable CLI contract
 - [ ] stable JSON schema
 - [ ] Windows production support
-- [ ] Linux support
-- [ ] macOS support
+- [ ] Linux production support
+- [ ] macOS production support
 - [ ] extensible detection rules
 - [ ] mature WSL2 support
 

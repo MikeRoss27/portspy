@@ -1,36 +1,49 @@
-//! Process chain: the ancestor tree of the selected listener.
+//! Process chain for the selected listener.
 
 use ratatui::text::{Line, Span};
 
 use portspy_core::domain::listener::Listener;
+use portspy_core::domain::process::ProcessId;
 
 use crate::ui::theme::Theme;
 
-/// Builds the rendered lines of the ancestor chain, leaf first.
+/// Builds the visible process chain with its origin match identified in text.
 pub fn lines(listener: &Listener, theme: Theme) -> Vec<Line<'static>> {
-    let mut out = vec![Line::from(Span::styled(
-        format!(
-            " ├── {} (pid {})",
-            listener.process.display_name(),
-            listener.pid()
-        ),
-        theme.accent_text(),
-    ))];
-    for (index, ancestor) in listener.process.ancestors.iter().enumerate() {
-        let is_last = index == listener.process.ancestors.len() - 1;
-        let branch = if is_last { " └──" } else { " ├──" };
-        out.push(Line::from(Span::styled(
-            format!(" {branch} {} (pid {})", ancestor.name, ancestor.identity.pid),
-            theme.muted_text(),
-        )));
-    }
+    let leaf = (listener.process.display_name(), listener.pid());
+    let ancestors = listener
+        .process
+        .ancestors
+        .iter()
+        .rev()
+        .map(|ancestor| (ancestor.name.as_str(), ancestor.identity.pid));
+    let mut lines: Vec<_> = ancestors
+        .chain(std::iter::once(leaf))
+        .enumerate()
+        .map(|(index, (name, pid))| line(name, pid, index != 0, listener.origin.matched_pid, theme))
+        .collect();
+
     if listener.process.ancestors.is_empty() {
-        out.push(Line::from(Span::styled(
-            "   (ancestors unknown)",
+        lines.push(Line::from(Span::styled(
+            "No parent information",
             theme.muted_text(),
         )));
     }
-    out
+    lines
+}
+
+fn line(
+    name: &str,
+    pid: ProcessId,
+    connected: bool,
+    matched: Option<ProcessId>,
+    theme: Theme,
+) -> Line<'static> {
+    let prefix = if connected { "  ↳ " } else { "" };
+    let mut spans = vec![Span::raw(format!("{prefix}{name} (PID {pid})"))];
+    if matched == Some(pid) {
+        spans.push(Span::styled(" · origin match", theme.accent_text()));
+    }
+    Line::from(spans)
 }
 
 #[cfg(test)]
@@ -43,19 +56,27 @@ mod tests {
     use portspy_core::domain::origin::{OriginInfo, OriginKind};
     use portspy_core::domain::process::{ProcessAncestor, ProcessId, ProcessIdentity, ProcessInfo};
     use portspy_core::domain::protocol::Protocol;
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{IpAddr, Ipv4Addr, TcpListener};
 
     #[test]
-    fn chain_lines_are_leaf_first() {
+    fn shows_parent_to_listener_with_only_the_matched_process_marked() -> std::io::Result<()> {
+        let socket = TcpListener::bind("127.0.0.1:0")?;
+        let port = socket.local_addr()?.port();
         let listener = Listener {
-            id: ListenerId::new(Protocol::Tcp, IpAddr::V4(Ipv4Addr::LOCALHOST), 3000, ProcessId(42), None),
+            id: ListenerId::new(
+                Protocol::Tcp,
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                port,
+                ProcessId(42),
+                None,
+            ),
             protocol: Protocol::Tcp,
             address: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            port: 3000,
+            port,
             process: ProcessInfo {
                 pid: ProcessId(42),
                 parent_pid: Some(ProcessId(7)),
-                name: "node.exe".to_owned(),
+                name: "node".to_owned(),
                 executable: None,
                 command_line: None,
                 working_directory: None,
@@ -63,25 +84,44 @@ mod tests {
                 memory_bytes: None,
                 cpu_percent: None,
                 ancestors: vec![
-                    ProcessAncestor::new(ProcessIdentity::new(ProcessId(7), None), "pwsh.exe".to_owned()),
-                    ProcessAncestor::new(ProcessIdentity::new(ProcessId(1), None), "code.exe".to_owned()),
+                    ProcessAncestor::new(
+                        ProcessIdentity::new(ProcessId(7), None),
+                        "codex".to_owned(),
+                    ),
+                    ProcessAncestor::new(
+                        ProcessIdentity::new(ProcessId(1), None),
+                        "zsh".to_owned(),
+                    ),
                 ],
             },
             application: ApplicationInfo::new(
                 ApplicationKind::Node,
-                "Node".to_owned(),
+                "Node.js".to_owned(),
                 Confidence::Exact,
             ),
             origin: OriginInfo::new(
-                OriginKind::VsCode,
-                "VS Code".to_owned(),
+                OriginKind::Codex,
+                "Codex".to_owned(),
                 Confidence::High,
-                Some(ProcessId(1)),
+                Some(ProcessId(7)),
             ),
+            project: portspy_core::domain::project::ProjectInfo::default(),
+            is_duplicate: false,
+            is_orphan: false,
         };
-        let rendered = lines(&listener, Theme::default());
-        assert_eq!(rendered.len(), 3);
-        assert!(rendered[0].to_string().contains("node.exe"));
-        assert!(rendered[2].to_string().contains("code.exe"));
+        let rendered: Vec<_> = lines(&listener, Theme::default())
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect();
+
+        assert_eq!(
+            rendered,
+            [
+                "zsh (PID 1)",
+                "  ↳ codex (PID 7) · origin match",
+                "  ↳ node (PID 42)"
+            ],
+        );
+        Ok(())
     }
 }

@@ -18,6 +18,15 @@ pub struct ListenerJson {
     pub application: ApplicationJson,
     pub process: ProcessJson,
     pub origin: OriginJson,
+    pub project: ProjectJson,
+    pub is_duplicate: bool,
+    pub is_orphan: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProjectJson {
+    pub name: Option<String>,
+    pub confidence: Confidence,
 }
 
 #[derive(Debug, Serialize)]
@@ -60,13 +69,42 @@ impl From<&portspy_core::domain::listener::Listener> for ListenerJson {
                 kind: listener.origin.kind,
                 confidence: listener.origin.confidence,
             },
+            project: ProjectJson {
+                name: listener.project.name().map(str::to_owned),
+                confidence: listener.project.confidence,
+            },
+            is_duplicate: listener.is_duplicate,
+            is_orphan: listener.is_orphan,
         }
     }
 }
 
 /// The JSON documents this CLI emits.
 #[derive(Debug, Serialize)]
+#[serde(untagged)]
 pub enum Output {
     List { listeners: Vec<ListenerJson> },
     Inspect { listener: Option<ListenerJson> },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Output;
+    use serde_json::json;
+
+    #[test]
+    fn list_output_has_no_internal_enum_wrapper() {
+        let value = serde_json::to_value(Output::List {
+            listeners: Vec::new(),
+        });
+
+        assert_eq!(value.ok(), Some(json!({ "listeners": [] })));
+    }
+
+    #[test]
+    fn inspect_output_has_no_internal_enum_wrapper() {
+        let value = serde_json::to_value(Output::Inspect { listener: None });
+
+        assert_eq!(value.ok(), Some(json!({ "listener": null })));
+    }
 }

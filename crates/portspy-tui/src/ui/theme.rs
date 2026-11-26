@@ -22,9 +22,9 @@ impl Default for Theme {
     fn default() -> Self {
         Self {
             primary: Color::Cyan,
-            secondary: Color::White,
+            secondary: Color::Reset,
             muted: Color::DarkGray,
-            accent: Color::LightCyan,
+            accent: Color::Cyan,
             warning: Color::Yellow,
             danger: Color::LightRed,
             success: Color::LightGreen,
@@ -46,7 +46,7 @@ impl Theme {
     /// Style of the selected table row.
     pub fn selected_row(self) -> Style {
         Style::new()
-            .fg(self.primary)
+            .fg(self.secondary)
             .add_modifier(Modifier::BOLD)
             .add_modifier(Modifier::REVERSED)
     }

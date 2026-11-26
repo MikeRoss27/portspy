@@ -8,6 +8,7 @@ use std::time::SystemTime;
 use super::application::ApplicationInfo;
 use super::origin::OriginInfo;
 use super::process::{ProcessId, ProcessInfo};
+use super::project::ProjectInfo;
 use super::protocol::Protocol;
 
 /// Stable identity of a listener.
@@ -40,7 +41,13 @@ impl ListenerId {
         pid: ProcessId,
         started_at: Option<SystemTime>,
     ) -> Self {
-        Self { protocol, address, port, pid, started_at }
+        Self {
+            protocol,
+            address,
+            port,
+            pid,
+            started_at,
+        }
     }
 }
 
@@ -63,6 +70,14 @@ pub struct Listener {
     pub application: ApplicationInfo,
     /// Inferred origin.
     pub origin: OriginInfo,
+    /// Inferred project membership.
+    pub project: ProjectInfo,
+    /// Whether this listener is one of several dev servers of the same
+    /// project (see `detection::duplicates`).
+    pub is_duplicate: bool,
+    /// Whether the owning process outlived its parent (see
+    /// `detection::orphan`).
+    pub is_orphan: bool,
 }
 
 impl Listener {

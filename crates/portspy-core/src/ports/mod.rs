@@ -50,7 +50,10 @@ mod tests {
 
     #[test]
     fn loopback_v6_is_loopback() {
-        assert_eq!(Exposure::of(v6([0, 0, 0, 0, 0, 0, 0, 1])), Exposure::Loopback);
+        assert_eq!(
+            Exposure::of(v6([0, 0, 0, 0, 0, 0, 0, 1])),
+            Exposure::Loopback
+        );
     }
 
     #[test]
@@ -66,6 +69,9 @@ mod tests {
     #[test]
     fn lan_address_is_interface() {
         assert_eq!(Exposure::of(v4([192, 168, 1, 42])), Exposure::Interface);
-        assert_eq!(Exposure::of(v6([0xfe80, 0, 0, 0, 0, 0, 0, 1])), Exposure::Interface);
+        assert_eq!(
+            Exposure::of(v6([0xfe80, 0, 0, 0, 0, 0, 0, 1])),
+            Exposure::Interface
+        );
     }
 }

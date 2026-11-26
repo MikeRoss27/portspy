@@ -7,6 +7,7 @@ pub mod query;
 use std::time::SystemTime;
 
 use crate::domain::listener::Listener;
+use crate::domain::process::ProcessInfo;
 
 /// An immutable view of the system at one instant.
 ///
@@ -19,6 +20,11 @@ pub struct SystemSnapshot {
     /// Wall-clock time of capture (for display).
     pub wall_time: SystemTime,
     pub listeners: Vec<Listener>,
+    /// Every process observed during collection, sorted by PID.
+    ///
+    /// Needed for parent→children traversal (tree kill) and future v0.2
+    /// features (duplicate and orphan detection).
+    pub processes: Vec<ProcessInfo>,
 }
 
 impl SystemSnapshot {
@@ -28,6 +34,7 @@ impl SystemSnapshot {
             captured_at: std::time::Instant::now(),
             wall_time: SystemTime::now(),
             listeners: Vec::new(),
+            processes: Vec::new(),
         }
     }
 }

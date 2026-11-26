@@ -1,15 +1,21 @@
 //! Detection engine: turns raw process facts into useful inference.
 //!
-//! Two independent engines live here:
+//! The engines live here:
 //!
 //! * [`origin`]: "what caused this process to exist?" (Codex, Claude Code, ...)
 //! * [`application`]: "what application is this?" (Next.js, Vite, ...)
+//! * [`project`]: "which project does this process belong to?"
+//! * [`duplicates`]: "is this one of several dev servers of the same project?"
+//! * [`orphan`]: "did this process outlive its parent?"
 //!
-//! Both engines are rule-based, declarative and fully unit-tested. No
+//! All engines are rule-based, declarative and fully unit-tested. No
 //! detection rule may exist without a test.
 
 pub mod application;
+pub mod duplicates;
 pub mod origin;
+pub mod orphan;
+pub mod project;
 
 use std::collections::HashMap;
 
@@ -31,7 +37,10 @@ impl<'a> DetectionContext<'a> {
         processes: &'a HashMap<ProcessId, ProcessInfo>,
         ancestry_builder: &'a AncestryBuilder,
     ) -> Self {
-        Self { processes, ancestry_builder }
+        Self {
+            processes,
+            ancestry_builder,
+        }
     }
 
     /// Looks up process facts by PID.

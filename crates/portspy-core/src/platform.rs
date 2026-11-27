@@ -9,6 +9,7 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+use crate::domain::listener::SocketAttribution;
 use crate::domain::process::{ProcessId, ProcessIdentity, ProcessInfo};
 use crate::domain::protocol::Protocol;
 
@@ -21,6 +22,7 @@ pub struct RawListener {
     pub address: IpAddr,
     pub port: u16,
     pub pid: ProcessId,
+    pub socket_attribution: Option<SocketAttribution>,
 }
 
 /// Process facts as reported by the operating system.

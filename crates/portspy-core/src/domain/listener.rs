@@ -57,13 +57,23 @@ impl fmt::Display for ListenerId {
     }
 }
 
-/// A local TCP listener enriched with process facts and inferences.
+/// Kernel-reported socket context when its owning PID is inaccessible.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SocketAttribution {
+    pub uid: Option<u32>,
+    /// Service unit associated with the socket's cgroup.
+    pub service: Option<String>,
+}
+
+/// A local listener enriched with process facts and inferences.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Listener {
     pub id: ListenerId,
     pub protocol: Protocol,
     pub address: IpAddr,
     pub port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub socket_attribution: Option<SocketAttribution>,
     /// Factual process information.
     pub process: ProcessInfo,
     /// Inferred application.
@@ -81,6 +91,29 @@ pub struct Listener {
 }
 
 impl Listener {
+    /// The service unit associated with an unattributed socket, when available.
+    pub fn socket_service(&self) -> Option<&str> {
+        self.socket_attribution.as_ref()?.service.as_deref()
+    }
+
+    /// The application name, or the best available context for an unattributed socket.
+    pub fn owner_label(&self) -> std::borrow::Cow<'_, str> {
+        if self.pid().as_u32() != 0 {
+            return self.application.label.as_str().into();
+        }
+        if let Some(service) = self.socket_service() {
+            return service.into();
+        }
+        if let Some(uid) = self
+            .socket_attribution
+            .as_ref()
+            .and_then(|context| context.uid)
+        {
+            return format!("UID {uid}").into();
+        }
+        "Unknown owner".into()
+    }
+
     /// The PID owning this listener.
     pub fn pid(&self) -> ProcessId {
         self.process.pid

@@ -24,7 +24,7 @@ use portspy_core::snapshot::builder::SnapshotBuilder;
 use crate::collector;
 use crate::input::actions::Action;
 use crate::input::keymap::map_key;
-use crate::state::{AppMode, AppState, Notification};
+use crate::state::{AppMode, AppState};
 use crate::ui;
 
 /// Messages sent from the background threads to the UI loop.
@@ -43,9 +43,7 @@ impl Message {
     fn apply(self, state: &mut AppState) {
         match self {
             Self::Snapshot(snapshot) => state.refresh_with(snapshot),
-            Self::CollectionError(error) => {
-                state.notification = Some(Notification::new(format!("collection failed: {error}")));
-            }
+            Self::CollectionError(error) => state.report_scan_failure(error),
             Self::StopCanceled(reason) => state.stop_validation_failed(reason),
             Self::StopFinished { plan, report } => state.report_stop(plan, report),
         }
@@ -318,6 +316,7 @@ mod tests {
             address: address.ip(),
             port: address.port(),
             pid: ProcessId(71),
+            socket_attribution: None,
         };
         let reviewed = FakePlatform {
             listeners: vec![listener.clone()],
@@ -382,6 +381,7 @@ mod tests {
                 address: address.ip(),
                 port: address.port(),
                 pid: ProcessId(71),
+                socket_attribution: None,
             }],
             processes: vec![process(71, None)],
             ..Default::default()

@@ -14,7 +14,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, query: &str) {
     }
 
     let theme = Theme::default();
-    let prefix = Span::styled(" / ", theme.accent_text());
+    let prefix = Span::styled(" / ", theme.keycap());
     let prompt = if query.is_empty() {
         Span::styled("Port, project or origin", theme.muted_text())
     } else {
@@ -25,7 +25,9 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, query: &str) {
     let offset = u16::try_from(cursor.saturating_sub(usize::from(last_column))).unwrap_or(u16::MAX);
     let column = cursor.min(usize::from(last_column)) as u16;
     frame.render_widget(
-        Paragraph::new(Line::from(vec![prefix, prompt])).scroll((0, offset)),
+        Paragraph::new(Line::from(vec![prefix, prompt]))
+            .style(theme.controls())
+            .scroll((0, offset)),
         area,
     );
     frame.set_cursor_position((area.x.saturating_add(column), area.y));

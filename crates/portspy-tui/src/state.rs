@@ -4,6 +4,8 @@
 //! exclusively through [`AppState::apply`].
 
 use portspy_core::domain::listener::ListenerId;
+use portspy_core::domain::protocol::Protocol;
+use portspy_core::error::PortSpyError;
 use portspy_core::processes::stop::StopPlan;
 use portspy_core::processes::tree::TreeKillReport;
 use portspy_core::snapshot::SystemSnapshot;
@@ -19,6 +21,23 @@ pub enum AppMode {
     Inspect,
     Search,
     ConfirmKill,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ScanStatus {
+    Waiting,
+    Current,
+    Failed(String),
+    Stale(String),
+}
+
+impl ScanStatus {
+    pub(crate) fn error_message(&self) -> Option<&str> {
+        match self {
+            Self::Failed(error) | Self::Stale(error) => Some(error),
+            Self::Waiting | Self::Current => None,
+        }
+    }
 }
 
 /// A transient message shown in the footer.
@@ -47,6 +66,8 @@ impl Notification {
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub snapshot: SystemSnapshot,
+    pub(crate) history: crate::history::History,
+    pub(crate) scan_status: ScanStatus,
     /// Stable selection identity — never a row index.
     pub selected: Option<ListenerId>,
     pub mode: AppMode,
@@ -57,6 +78,8 @@ pub struct AppState {
     pub query: String,
     recent_only: bool,
     known_owners_only: bool,
+    protocol_filter: Option<Protocol>,
+    preview_enabled: bool,
     recent: RecentListeners,
     pub sort: SortField,
     pub order: SortOrder,
@@ -75,6 +98,8 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             snapshot: SystemSnapshot::empty(),
+            history: crate::history::History::default(),
+            scan_status: ScanStatus::Waiting,
             selected: None,
             mode: AppMode::Browse,
             inspection_scroll: 0,
@@ -82,6 +107,8 @@ impl Default for AppState {
             query: String::new(),
             recent_only: false,
             known_owners_only: false,
+            protocol_filter: None,
+            preview_enabled: true,
             recent: RecentListeners::default(),
             sort: SortField::Port,
             order: SortOrder::Ascending,
@@ -135,6 +162,18 @@ impl AppState {
                 self.known_owners_only = !self.known_owners_only;
                 self.mode = AppMode::Browse;
                 self.reconcile_selection();
+            }
+            crate::input::actions::Action::CycleProtocol => {
+                self.protocol_filter = match self.protocol_filter {
+                    None => Some(Protocol::Tcp),
+                    Some(Protocol::Tcp) => Some(Protocol::Udp),
+                    Some(Protocol::Udp) => None,
+                };
+                self.mode = AppMode::Browse;
+                self.reconcile_selection();
+            }
+            crate::input::actions::Action::TogglePreview => {
+                self.preview_enabled = !self.preview_enabled;
             }
             crate::input::actions::Action::SortNextField => {
                 self.sort = next_sort_field(self.sort);
@@ -368,8 +407,18 @@ impl AppState {
             self.cancel_stop("Stop canceled · target or affected scope changed");
         }
         self.recent.observe(&snapshot);
+        self.history.observe(&snapshot);
         self.snapshot = snapshot;
+        self.scan_status = ScanStatus::Current;
         self.reconcile_selection();
+    }
+
+    pub(crate) fn report_scan_failure(&mut self, error: PortSpyError) {
+        let message = format!("Scan failed · {error}");
+        self.scan_status = match self.scan_status {
+            ScanStatus::Waiting | ScanStatus::Failed(_) => ScanStatus::Failed(message),
+            ScanStatus::Current | ScanStatus::Stale(_) => ScanStatus::Stale(message),
+        };
     }
 
     /// Whether the recently opened view is active.
@@ -387,6 +436,14 @@ impl AppState {
         self.known_owners_only
     }
 
+    pub(crate) const fn protocol_filter(&self) -> Option<Protocol> {
+        self.protocol_filter
+    }
+
+    pub(crate) const fn preview_enabled(&self) -> bool {
+        self.preview_enabled
+    }
+
     /// How many sockets in the active view have no attributed PID.
     pub fn unknown_owner_count(&self) -> usize {
         self.snapshot
@@ -395,6 +452,9 @@ impl AppState {
             .filter(|listener| {
                 listener.pid().as_u32() == 0
                     && (!self.recent_only || self.recent.contains(listener.id))
+                    && self
+                        .protocol_filter
+                        .is_none_or(|protocol| listener.protocol == protocol)
             })
             .count()
     }
@@ -405,6 +465,9 @@ impl AppState {
             portspy_core::snapshot::query::search(&self.snapshot.listeners, &self.query);
         if self.recent_only {
             filtered.retain(|listener| self.recent.contains(listener.id));
+        }
+        if let Some(protocol) = self.protocol_filter {
+            filtered.retain(|listener| listener.protocol == protocol);
         }
         if self.known_owners_only {
             filtered.retain(|listener| listener.pid().as_u32() != 0);
@@ -497,7 +560,38 @@ mod tests {
             address: address.ip(),
             port: address.port(),
             pid: ProcessId(pid),
+            socket_attribution: None,
         })
+    }
+
+    #[test]
+    fn protocol_filter_composes_with_owners_and_preserves_valid_selection() -> std::io::Result<()> {
+        let socket = TcpListener::bind("127.0.0.1:0")?;
+        let tcp = raw_listener(&socket, 41)?;
+        let udp = RawListener {
+            protocol: Protocol::Udp,
+            pid: ProcessId(0),
+            ..tcp.clone()
+        };
+        let mut state = AppState::new();
+        observe(&mut state, &[tcp, udp]);
+        let selected = state.selected;
+
+        state.apply(Action::CycleProtocol);
+        assert_eq!(state.protocol_filter(), Some(Protocol::Tcp));
+        assert_eq!(state.selected, selected);
+        state.apply(Action::CycleProtocol);
+        assert_eq!(
+            state.selected_listener().map(|listener| listener.protocol),
+            Some(Protocol::Udp)
+        );
+        state.apply(Action::ToggleKnownOwners);
+        assert!(state.visible_listeners().is_empty());
+        assert!(state.selected.is_none());
+        state.apply(Action::CycleProtocol);
+        assert_eq!(state.selected, selected);
+        assert_eq!(state.unknown_owner_count(), 1);
+        Ok(())
     }
 
     fn listener(port: u16, pid: u32) -> Listener {
@@ -525,6 +619,7 @@ mod tests {
             protocol: Protocol::Tcp,
             address: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port,
+            socket_attribution: None,
             process,
             application: ApplicationInfo::new(
                 ApplicationKind::Node,

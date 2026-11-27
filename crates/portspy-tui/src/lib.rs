@@ -8,6 +8,7 @@
 pub mod app;
 pub mod collector;
 pub mod format;
+mod history;
 pub mod input;
 mod recent;
 pub mod state;

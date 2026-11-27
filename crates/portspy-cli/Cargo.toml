@@ -20,6 +20,8 @@ anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+rmcp = { version = "3.11", default-features = false, features = ["macros", "server", "transport-io"] }
+tokio = { version = "1", features = ["rt"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 time.workspace = true

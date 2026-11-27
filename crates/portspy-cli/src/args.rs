@@ -31,6 +31,8 @@ pub enum Command {
     /// Opens the interactive terminal interface (default)
     #[default]
     Tui,
+    /// Serves read-only listener inspection tools over MCP stdio
+    Mcp,
     /// Lists local listening ports
     List {
         /// Machine-readable JSON output

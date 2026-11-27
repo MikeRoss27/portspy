@@ -48,7 +48,7 @@ pub fn list<P: Platform + ?Sized>(
 
     writeln!(
         out,
-        "PORT     APPLICATION      ORIGIN            PID        MEMORY   UPTIME"
+        "PORT     APPLICATION / SERVICE   ORIGIN            PID        MEMORY   UPTIME"
     )
     .map_err(io_error)?;
     for listener in listeners {
@@ -200,9 +200,9 @@ pub fn kill<P: Platform + ?Sized>(
 
 fn table_row(listener: &Listener, snapshot: &portspy_core::snapshot::SystemSnapshot) -> String {
     format!(
-        "{:<9} {:<17} {:<17} {:<10} {:<9} {}",
+        "{:<9} {:<23} {:<17} {:<10} {:<9} {}",
         fmt_address::short(listener.address, listener.port),
-        listener.application.label,
+        listener.owner_label(),
         listener.origin.label,
         listener.pid(),
         fmt_memory::memory(listener.process.memory_bytes),
@@ -220,6 +220,24 @@ fn print_details(
         "Port        {}",
         fmt_address::short(listener.address, listener.port)
     )?;
+    if listener.pid().as_u32() == 0 {
+        writeln!(
+            out,
+            "Binding     {}",
+            fmt_address::full(listener.address, listener.port)
+        )?;
+        if let Some(service) = listener.socket_service() {
+            writeln!(out, "Service     {service}")?;
+        }
+        if let Some(uid) = listener
+            .socket_attribution
+            .as_ref()
+            .and_then(|context| context.uid)
+        {
+            writeln!(out, "Socket UID  {uid}")?;
+        }
+        return writeln!(out, "PID         unavailable");
+    }
     writeln!(out, "Application {}", listener.application.label)?;
     writeln!(out, "Origin      {}", listener.origin.label)?;
     writeln!(out, "Project     {}", listener.project.label())?;
@@ -291,6 +309,7 @@ mod kill_tests {
                     address: address.ip(),
                     port: address.port(),
                     pid: ProcessId(10),
+                    socket_attribution: None,
                 },
                 snapshots: AtomicUsize::new(0),
                 change_identity,

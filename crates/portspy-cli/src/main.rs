@@ -10,6 +10,7 @@
 
 mod args;
 mod commands;
+mod mcp;
 mod output;
 
 use clap::Parser;
@@ -34,6 +35,7 @@ fn main() -> Result<(), anyhow::Error> {
             app.run()?;
         }
         Command::List { json } => commands::list(&mut builder, json)?,
+        Command::Mcp => mcp::run(std::sync::Arc::from(platform))?,
         Command::Inspect {
             port,
             protocol,

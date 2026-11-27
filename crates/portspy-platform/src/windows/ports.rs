@@ -290,6 +290,7 @@ fn row_to_listener(row: &MIB_TCPROW_OWNER_PID) -> Option<RawListener> {
         address: std::net::Ipv4Addr::from(u32::from_be(row.dwLocalAddr)).into(),
         port: u16::from_be(row.dwLocalPort as u16),
         pid: ProcessId(pid),
+        socket_attribution: None,
     })
 }
 
@@ -305,6 +306,7 @@ fn row6_to_listener(row: &MIB_TCP6ROW_OWNER_PID) -> Option<RawListener> {
         address: std::net::Ipv6Addr::from(row.ucLocalAddr).into(),
         port: u16::from_be(row.dwLocalPort as u16),
         pid: ProcessId(pid),
+        socket_attribution: None,
     })
 }
 
@@ -320,6 +322,7 @@ fn udp_row_to_listener(row: &MIB_UDPROW_OWNER_PID) -> Option<RawListener> {
         address: std::net::Ipv4Addr::from(u32::from_be(row.dwLocalAddr)).into(),
         port: u16::from_be(row.dwLocalPort as u16),
         pid: ProcessId(pid),
+        socket_attribution: None,
     })
 }
 
@@ -335,6 +338,7 @@ fn udp_row6_to_listener(row: &MIB_UDP6ROW_OWNER_PID) -> Option<RawListener> {
         address: std::net::Ipv6Addr::from(row.ucLocalAddr).into(),
         port: u16::from_be(row.dwLocalPort as u16),
         pid: ProcessId(pid),
+        socket_attribution: None,
     })
 }
 

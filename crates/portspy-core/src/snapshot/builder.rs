@@ -96,7 +96,10 @@ impl<'p, P: Platform + ?Sized> SnapshotBuilder<'p, P> {
             if let Some(cached) = self.process_cache.get(&key)
                 && now.duration_since(cached.cached_at) < CACHE_TTL
             {
-                processes.insert(raw.pid, cached.info.clone());
+                let mut info = cached.info.clone();
+                info.memory_bytes = raw.memory_bytes;
+                info.cpu_percent = raw.cpu_percent;
+                processes.insert(raw.pid, info);
                 continue;
             }
 
@@ -146,6 +149,7 @@ impl<'p, P: Platform + ?Sized> SnapshotBuilder<'p, P> {
                     protocol: raw.protocol,
                     address: raw.address,
                     port: raw.port,
+                    socket_attribution: raw.socket_attribution,
                     process,
                     application,
                     origin,
@@ -224,6 +228,7 @@ mod tests {
             address: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port,
             pid: ProcessId(pid),
+            socket_attribution: None,
         }
     }
 
@@ -239,6 +244,38 @@ mod tests {
             memory_bytes: Some(1024),
             cpu_percent: None,
         }
+    }
+
+    #[test]
+    fn repeated_snapshot_uses_current_memory_even_with_cached_identity() -> Result<(), PortSpyError>
+    {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        struct SamplingPlatform(AtomicU64);
+
+        impl Platform for SamplingPlatform {
+            fn listeners(&self) -> Result<Vec<RawListener>, PlatformError> {
+                Ok(Vec::new())
+            }
+
+            fn processes(&self) -> Result<Vec<RawProcess>, PlatformError> {
+                let memory = self.0.fetch_add(1024, Ordering::Relaxed);
+                let mut process = raw_process(42, "node");
+                process.started_at = Some(std::time::UNIX_EPOCH);
+                process.memory_bytes = Some(memory);
+                Ok(vec![process])
+            }
+
+            fn kill(&self, _: ProcessId) -> Result<KillOutcome, PlatformError> {
+                Ok(KillOutcome::AlreadyExited)
+            }
+        }
+
+        let platform = SamplingPlatform(AtomicU64::new(1024));
+        let mut builder = SnapshotBuilder::new(&platform);
+        assert_eq!(builder.snapshot()?.processes[0].memory_bytes, Some(1024));
+        assert_eq!(builder.snapshot()?.processes[0].memory_bytes, Some(2048));
+        Ok(())
     }
 
     fn dev_process(pid: u32, parent: Option<u32>, cwd: &str) -> RawProcess {

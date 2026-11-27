@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-19 -31 256 256" role="img" aria-labelledby="title">
+  <title id="title">PortSpy</title>
+  <style>
+    @media (prefers-color-scheme: dark) {
+      .mark { fill: #50f0c3; }
+    }
+  </style>
+  <g class="mark" fill="#16856d">
+    <rect y="26" width="51" height="51"/>
+    <rect y="116" width="51" height="51"/>
+    <path d="M103 0 218 97 103 194V153L170 97 103 41Z"/>
+  </g>
+</svg>

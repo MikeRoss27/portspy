@@ -9,11 +9,16 @@ pub mod screens;
 pub mod theme;
 
 use ratatui::Frame;
+use ratatui::widgets::Block;
 
 use crate::state::AppState;
 
 /// Renders the current mode into the frame.
 pub fn render(frame: &mut Frame<'_>, state: &mut AppState) {
+    frame.render_widget(
+        Block::default().style(theme::Theme::default().canvas()),
+        frame.area(),
+    );
     match state.mode {
         crate::state::AppMode::Browse | crate::state::AppMode::Search => {
             screens::listeners::render(frame, state);

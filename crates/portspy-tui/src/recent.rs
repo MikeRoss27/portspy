@@ -73,6 +73,7 @@ mod tests {
                 protocol: id.protocol,
                 address: id.address,
                 port: id.port,
+                socket_attribution: None,
                 process: ProcessInfo {
                     pid: id.pid,
                     parent_pid: None,

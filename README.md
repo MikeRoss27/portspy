@@ -1,8 +1,10 @@
-# PortSpy
+# <img src="assets/brand/portspy-logo.svg" alt="" width="52" height="52"> PortSpy
 
 > Know what's using your localhost.
 
 **PortSpy** is a fast, Windows-first terminal UI for discovering local listening ports, understanding what is behind them, identifying where processes came from, and stopping processes you no longer need.
+
+![PortSpy listing local listeners with the selected socket’s details and listener history](assets/screenshots/listeners.png)
 
 Instead of this:
 
@@ -314,6 +316,7 @@ Searchable fields include:
 - protocol
 - PID
 - command line
+- Linux socket service unit
 
 ### Recently opened
 
@@ -322,8 +325,18 @@ initial scan. The view keeps updating as you work. Press `r` again to return
 to all listeners.
 
 Press `u` to hide or show sockets whose owning PID is unavailable. The header
-keeps a count of those sockets. The wide table also shows each bind address,
-so different addresses on the same port can be distinguished.
+keeps a count of those sockets. Press `t` to cycle through both protocols,
+TCP only and UDP only. These filters work with search and the recent view.
+
+### Preview and inspection
+
+On wide terminals, the listener preview follows your selection. It shows the
+full bind address, exposure, owning process and origin. `Tab` toggles the
+preview so you can use the full width of the table. `Enter` opens the full
+inspector, including the process chain and command line. On narrow terminals,
+the inspector uses the whole screen.
+
+![PortSpy inspecting a local Python listener and its process memory history](assets/screenshots/inspector.png)
 
 ### Sorting
 
@@ -345,6 +358,40 @@ A background collector thread rebuilds the system snapshot every 2 seconds and h
 The selected listener is tracked using a stable listener identity rather than a table index.
 
 That means a disappearing process should not make the cursor randomly jump around the interface.
+
+### Live charts
+
+When there is room, the listener view charts the total observed socket count
+over the last ten minutes. The inspector charts the selected process's memory
+over the last minute. History starts when the TUI opens, and missing samples
+appear as gaps. Memory samples follow the process identity across snapshots.
+
+### Agent integration
+
+Run `cargo build --locked` from the checkout. Register the resulting PortSpy
+binary as a local stdio MCP server in your agent client. Use the absolute path
+to `target/debug/portspy` on Linux or macOS, or `target/debug/portspy.exe` on Windows.
+
+```json
+{
+  "mcpServers": {
+    "portspy": {
+      "command": "/absolute/path/to/portspy",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+The server exposes two read-only tools. `list_listeners` returns the current
+socket inventory. `inspect_listener` returns every match for a numeric port,
+with optional `protocol` (`tcp` or `udp`) and exact bind `address`. Results include
+socket exposure and available process identity. Inspect results also include
+observed process ancestry.
+
+The [PortSpy agent skill](.agents/skills/portspy-inspect/SKILL.md) tells agents
+how to choose tools and interpret partial observations. It also covers the CLI
+fallback when MCP is unavailable.
 
 ---
 
@@ -596,8 +643,10 @@ A new crate should only exist when there is a real architectural boundary that j
 | macOS | Socket descriptors visible through Apple's `libproc` | `sysinfo` |
 
 Process permissions affect which owners and metadata PortSpy can read. On
-Linux, a socket can be listed without a visible owner. On macOS, sockets
-whose file descriptors cannot be inspected may be absent from the list.
+Linux, when the owning PID is unavailable, PortSpy shows the socket's service
+unit from cgroup v2 when available, or the socket UID. Service attribution
+does not grant access to a PID. On macOS, sockets whose file descriptors
+cannot be inspected may be absent from the list.
 PortSpy supports process termination on Windows and Linux. On macOS, the
 CLI and TUI can list and inspect sockets, and process termination is unavailable.
 
@@ -816,9 +865,9 @@ Deeper process intelligence.
 Development environment awareness.
 
 - [ ] Docker awareness
-- [ ] resource history
+- [x] in-session listener history
 - [ ] CPU trends
-- [ ] memory trends
+- [x] memory trends
 - [ ] service grouping
 - [ ] project grouping
 
@@ -829,8 +878,8 @@ Agent integration.
 - [ ] stable agent-facing CLI
 - [ ] Codex integration
 - [ ] Claude Code integration
-- [ ] agent skills
-- [ ] MCP server
+- [x] agent skill for local listener inspection
+- [x] read-only MCP server over stdio
 - [ ] shared runtime awareness
 
 ### `v1.0`
@@ -875,6 +924,9 @@ Stop it when you want.
 ## Contributing
 
 PortSpy is still early, so architectural consistency matters more than raw feature count.
+
+The [brand assets and usage guide](docs/branding.md) cover the README banner,
+avatar and terminal mark.
 
 Before contributing:
 

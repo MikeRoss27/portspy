@@ -6,6 +6,7 @@
 
 use portspy_core::domain::application::ApplicationKind;
 use portspy_core::domain::confidence::Confidence;
+use portspy_core::domain::listener::SocketAttribution;
 use portspy_core::domain::origin::OriginKind;
 use serde::Serialize;
 
@@ -17,6 +18,8 @@ pub struct ListenerJson {
     pub address: std::net::IpAddr,
     pub application: ApplicationJson,
     pub process: ProcessJson,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub socket_attribution: Option<SocketAttribution>,
     pub origin: OriginJson,
     pub project: ProjectJson,
     pub is_duplicate: bool,
@@ -65,6 +68,7 @@ impl From<&portspy_core::domain::listener::Listener> for ListenerJson {
                 memory_bytes: listener.process.memory_bytes,
                 started_at: listener.process.started_at,
             },
+            socket_attribution: listener.socket_attribution.clone(),
             origin: OriginJson {
                 kind: listener.origin.kind,
                 confidence: listener.origin.confidence,

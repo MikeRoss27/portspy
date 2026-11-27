@@ -104,6 +104,8 @@ pub fn search<'a>(listeners: &'a [Listener], query: &str) -> Vec<&'a Listener> {
                     .strip_prefix(':')
                     .is_some_and(|prefix| !prefix.is_empty() && port.starts_with(prefix))
                 || l.application.label.to_lowercase().contains(&needle)
+                || l.socket_service()
+                    .is_some_and(|service| service.to_lowercase().contains(&needle))
                 || l.process.name.to_lowercase().contains(&needle)
                 || l.origin.label.to_lowercase().contains(&needle)
                 || l.pid().to_string().contains(&needle)
@@ -234,6 +236,7 @@ mod tests {
             protocol,
             address: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port,
+            socket_attribution: None,
             process,
             application: ApplicationInfo::new(
                 application,

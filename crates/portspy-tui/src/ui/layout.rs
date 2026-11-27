@@ -38,15 +38,34 @@ impl Breakpoint {
 /// Splits the screen into header, body and footer areas.
 pub fn main_layout(area: Rect) -> (Rect, Rect, Rect) {
     let vertical = Layout::vertical([
-        Constraint::Length(3),
+        Constraint::Length(if area.height < 16 { 2 } else { 3 }),
         Constraint::Min(0),
-        Constraint::Length(1),
+        Constraint::Length(if area.width < 130 && area.height >= 20 {
+            2
+        } else {
+            1
+        }),
     ]);
     let chunks = vertical.split(area);
     let header = chunks[0];
     let body = chunks[1];
     let footer = chunks[2];
     (header, body, footer)
+}
+
+/// Reserves room for a preview while keeping the main listener columns readable.
+pub(crate) fn browse_layout(area: Rect, preview: bool) -> (Rect, Option<Rect>) {
+    if !preview || area.width < 116 || area.height < 12 {
+        return (area, None);
+    }
+    let preview_width = (area.width / 3).clamp(38, 52);
+    let [list, _, preview] = Layout::horizontal([
+        Constraint::Min(0),
+        Constraint::Length(1),
+        Constraint::Length(preview_width),
+    ])
+    .areas(area);
+    (list, Some(preview))
 }
 
 /// Shows the listener list alongside details when the terminal is wide enough.
@@ -57,9 +76,13 @@ pub fn inspect_layout(area: Rect) -> (Option<Rect>, Rect) {
     ) {
         return (None, area);
     }
-    let horizontal = Layout::horizontal([Constraint::Percentage(45), Constraint::Percentage(55)]);
-    let chunks = horizontal.split(area);
-    (Some(chunks[0]), chunks[1])
+    let [list, _, inspector] = Layout::horizontal([
+        Constraint::Percentage(55),
+        Constraint::Length(1),
+        Constraint::Min(0),
+    ])
+    .areas(area);
+    (Some(list), inspector)
 }
 
 #[cfg(test)]
@@ -84,7 +107,9 @@ mod tests {
         assert!(header.y < body.y);
         assert!(body.y < footer.y);
         assert_eq!(header.height, 3);
-        assert_eq!(footer.height, 1);
+        assert_eq!(footer.height, 2);
+        let (header, _, footer) = main_layout(Rect::new(0, 0, 64, 12));
+        assert_eq!((header.height, footer.height), (2, 1));
     }
 
     #[test]
@@ -94,7 +119,7 @@ mod tests {
 
         let wide = Rect::new(0, 3, 120, 20);
         let (list, details) = inspect_layout(wide);
-        assert!(list.is_some_and(|list| list.right() == details.left()));
+        assert!(list.is_some_and(|list| list.right() + 1 == details.left()));
         assert_eq!(details.right(), wide.right());
     }
 }

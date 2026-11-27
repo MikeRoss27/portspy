@@ -119,6 +119,7 @@ mod tests {
             protocol: Protocol::Tcp,
             address: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 3000 + id as u16,
+            socket_attribution: None,
             process: ProcessInfo {
                 pid: ProcessId(id),
                 parent_pid: None,

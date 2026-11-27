@@ -3,7 +3,7 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use crate::format::address;
 use crate::state::AppState;
@@ -31,9 +31,9 @@ pub fn overlay(frame: &mut Frame<'_>, area: Rect, state: &mut AppState) {
         return;
     }
     let title = if plan.tree {
-        " Stop process tree? "
+        "Stop process tree?"
     } else {
-        " Stop process? "
+        "Stop process?"
     };
     let mut lines = vec![
         Line::from(format!(
@@ -87,14 +87,14 @@ pub fn overlay(frame: &mut Frame<'_>, area: Rect, state: &mut AppState) {
     frame.render_widget(
         paragraph
             .block(
-                Block::default()
-                    .borders(Borders::ALL)
+                theme
+                    .panel("△", title)
+                    .borders(ratatui::widgets::Borders::ALL)
+                    .padding(ratatui::widgets::Padding::horizontal(0))
                     .border_style(theme.danger_text())
-                    .title(Span::styled(title, theme.danger_text()))
                     .title_bottom(Span::styled(help, theme.footer_hint())),
             )
-            .scroll((state.stop_review_scroll, 0))
-            .style(theme.footer_hint().fg(theme.secondary)),
+            .scroll((state.stop_review_scroll, 0)),
         popup,
     );
 }

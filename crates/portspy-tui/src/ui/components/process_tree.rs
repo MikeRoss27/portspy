@@ -73,6 +73,7 @@ mod tests {
             protocol: Protocol::Tcp,
             address: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port,
+            socket_attribution: None,
             process: ProcessInfo {
                 pid: ProcessId(42),
                 parent_pid: Some(ProcessId(7)),

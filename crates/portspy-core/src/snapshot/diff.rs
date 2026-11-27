@@ -83,6 +83,7 @@ mod tests {
             protocol: Protocol::Tcp,
             address: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port,
+            socket_attribution: None,
             process,
             application: ApplicationInfo::new(
                 ApplicationKind::Unknown,

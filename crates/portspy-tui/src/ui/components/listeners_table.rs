@@ -3,13 +3,13 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Cell, HighlightSpacing, Paragraph, Row, Table};
+use ratatui::widgets::{Cell, HighlightSpacing, Paragraph, Row, Table};
 
 use portspy_core::domain::listener::Listener;
 use portspy_core::ports::Exposure;
 
 use crate::format::{address, duration, memory};
-use crate::state::AppState;
+use crate::state::{AppState, ScanStatus};
 use crate::ui::layout::Breakpoint;
 use crate::ui::theme::Theme;
 
@@ -18,23 +18,51 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &mut AppState) {
     let theme = Theme::default();
     let mut table_state = std::mem::take(&mut state.table_state);
     let visible = state.visible_listeners();
-    let block = Block::bordered().title(format!(" listeners {} ", visible.len()));
+    let block = theme.panel("≡", format!("listeners {}", visible.len()));
     if visible.is_empty() {
-        let message = if state.recent_only() && state.recent_count() == 0 {
-            "No new listeners in this session."
-        } else if !state.query.trim().is_empty() {
-            "No listeners match this search."
-        } else if state.known_owners_only() && state.unknown_owner_count() > 0 {
-            "No identified owners in this view. Press u to show all listeners."
-        } else {
-            "No TCP or UDP listeners found."
-        };
+        let message =
+            if state.scan_status == ScanStatus::Waiting && state.snapshot.listeners.is_empty() {
+                "Scanning for local listeners…"
+            } else if matches!(state.scan_status, ScanStatus::Failed(_)) {
+                "The initial scan failed. Retrying automatically."
+            } else if state.recent_only() && state.recent_count() == 0 {
+                "No new listeners in this session."
+            } else if !state.query.trim().is_empty() {
+                "No listeners match this search. Esc clears the query."
+            } else if state.known_owners_only() && state.unknown_owner_count() > 0 {
+                "No listener has a visible PID. Press u to include the others."
+            } else if let Some(protocol) = state.protocol_filter() {
+                match protocol {
+                    portspy_core::domain::protocol::Protocol::Tcp => {
+                        "No TCP listeners in this view. Press t to change protocol."
+                    }
+                    portspy_core::domain::protocol::Protocol::Udp => {
+                        "No UDP listeners in this view. Press t to change protocol."
+                    }
+                }
+            } else {
+                "No TCP or UDP listeners found."
+            };
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let message = Paragraph::new(message)
+            .centered()
+            .style(if state.scan_status.error_message().is_some() {
+                theme.warning_text()
+            } else {
+                theme.muted_text()
+            })
+            .wrap(ratatui::widgets::Wrap { trim: true });
+        let height = u16::try_from(message.line_count(inner.width)).unwrap_or(u16::MAX);
+        let offset = inner.height.saturating_sub(height) / 2;
         frame.render_widget(
-            Paragraph::new(message)
-                .style(theme.muted_text())
-                .wrap(ratatui::widgets::Wrap { trim: true })
-                .block(block),
-            area,
+            message,
+            Rect::new(
+                inner.x,
+                inner.y + offset,
+                inner.width,
+                inner.height - offset,
+            ),
         );
         state.table_state = table_state;
         return;
@@ -42,17 +70,21 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &mut AppState) {
 
     let breakpoint = Breakpoint::of(area.width);
     let (header, widths) = columns(breakpoint);
-    let rows = visible.iter().map(|listener| {
-        Row::new(cells(listener, breakpoint, theme)).height(if breakpoint == Breakpoint::Narrow {
-            2
-        } else {
-            1
-        })
+    let rows = visible.iter().enumerate().map(|(index, listener)| {
+        Row::new(cells(listener, breakpoint, theme))
+            .style(theme.table_row(index))
+            .height(if breakpoint == Breakpoint::Narrow {
+                2
+            } else {
+                1
+            })
     });
     let table = Table::new(rows, widths)
-        .header(Row::new(header.iter().copied()).style(theme.table_header()))
+        .header(
+            Row::new(header.iter().copied()).style(theme.table_header().patch(theme.controls())),
+        )
         .block(block)
-        .highlight_symbol("› ")
+        .highlight_symbol(Span::styled("▌ ", theme.accent_text()))
         .highlight_spacing(HighlightSpacing::Always)
         .row_highlight_style(theme.selected_row());
 
@@ -65,15 +97,15 @@ fn columns(breakpoint: Breakpoint) -> (&'static [&'static str], &'static [Constr
     match breakpoint {
         Breakpoint::Full => (
             &[
-                "PORT", "APP", "PROJECT", "ORIGIN", "BINDING", "ADDRESS", "PID", "PROCESS", "MEM",
-                "AGE",
+                "PORT", "OWNER", "PROJECT", "ORIGIN", "BINDING", "ADDRESS", "PID", "PROCESS",
+                "MEM", "AGE",
             ],
             &[
                 Length(10),
                 Fill(1),
                 Fill(1),
                 Length(17),
-                Length(14),
+                Length(16),
                 Constraint::Percentage(16),
                 Length(9),
                 Fill(1),
@@ -82,24 +114,26 @@ fn columns(breakpoint: Breakpoint) -> (&'static [&'static str], &'static [Constr
             ],
         ),
         Breakpoint::Wide => (
-            &["PORT", "APP", "PROJECT", "ORIGIN", "BINDING", "MEM", "AGE"],
+            &[
+                "PORT", "OWNER", "PROJECT", "ORIGIN", "BINDING", "MEM", "AGE",
+            ],
             &[
                 Length(10),
                 Fill(1),
                 Fill(1),
                 Length(17),
-                Length(14),
+                Length(16),
                 Length(8),
                 Length(8),
             ],
         ),
         Breakpoint::Medium => (
-            &["PORT", "APP", "PROJECT", "ORIGIN", "BINDING"],
-            &[Length(10), Fill(1), Fill(1), Length(14), Length(14)],
+            &["PORT", "OWNER", "PROJECT", "ORIGIN", "BINDING"],
+            &[Length(10), Fill(1), Fill(1), Length(14), Length(16)],
         ),
         Breakpoint::Narrow => (
-            &["PORT / BINDING", "APP / PROJECT / ORIGIN"],
-            &[Length(14), Fill(1)],
+            &["PORT / BINDING", "OWNER / PROJECT / ORIGIN"],
+            &[Length(16), Fill(1)],
         ),
     }
 }
@@ -107,22 +141,26 @@ fn columns(breakpoint: Breakpoint) -> (&'static [&'static str], &'static [Constr
 fn cells(listener: &Listener, breakpoint: Breakpoint, theme: Theme) -> Vec<Cell<'_>> {
     let port = Line::from(vec![
         Span::styled(format!(":{}", listener.port), theme.accent_text()),
-        Span::raw(format!(
-            " {}",
-            listener.protocol.as_str().to_ascii_uppercase()
-        )),
+        Span::styled(
+            format!(" {}", listener.protocol.as_str().to_ascii_uppercase()),
+            theme.protocol(listener.protocol),
+        ),
     ]);
-    let scope_style = match Exposure::of(listener.address) {
-        Exposure::Loopback => theme.muted_text(),
-        Exposure::Interface | Exposure::AllInterfaces => theme.warning_text(),
-    };
-    let scope = Span::styled(address::scope(listener.address), scope_style);
+    let (icon, scope_style) = theme.exposure(Exposure::of(listener.address));
+    let scope = Span::styled(
+        format!("{icon} {}", address::scope(listener.address)),
+        scope_style,
+    );
     let known_owner = listener.pid().as_u32() != 0;
-    let app = Span::raw(if known_owner {
-        listener.application.label.as_str()
+    let label = listener.owner_label();
+    let app = if let Some(service) = listener.socket_service() {
+        Span::styled(
+            format!("▪ {}", service.strip_suffix(".service").unwrap_or(service)),
+            theme.accent_text(),
+        )
     } else {
-        "Unknown owner"
-    });
+        Span::raw(label)
+    };
     let project = listener.project.name().unwrap_or("—");
     let mut origin = if known_owner {
         Line::from(listener.origin.label.as_str())
@@ -130,10 +168,10 @@ fn cells(listener: &Listener, breakpoint: Breakpoint, theme: Theme) -> Vec<Cell<
         Line::from(Span::styled("—", theme.muted_text()))
     };
     if listener.is_duplicate {
-        origin.push_span(Span::styled(" dup", theme.warning_text()));
+        origin.push_span(Span::styled(" ≋ dup", theme.warning_text()));
     }
     if listener.is_orphan {
-        origin.push_span(Span::styled(" orphan", theme.warning_text()));
+        origin.push_span(Span::styled(" △ orphan", theme.warning_text()));
     }
     if breakpoint == Breakpoint::Narrow {
         return vec![
@@ -200,6 +238,7 @@ mod tests {
             protocol: Protocol::Tcp,
             address,
             port,
+            socket_attribution: None,
             process: ProcessInfo {
                 pid,
                 parent_pid: None,
@@ -259,6 +298,72 @@ mod tests {
     }
 
     #[test]
+    fn scan_failure_distinguishes_initial_failure_from_a_stale_snapshot()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use portspy_core::{PortSpyError, snapshot::SystemSnapshot};
+
+        let mut state = AppState::new();
+        let mut terminal = Terminal::new(TestBackend::new(80, 20))?;
+        terminal.draw(|frame| ui::render(frame, &mut state))?;
+        assert!(rendered(&terminal).contains("Scanning for local listeners"));
+        state.report_scan_failure(PortSpyError::Internal("scan unavailable".into()));
+        terminal.draw(|frame| ui::render(frame, &mut state))?;
+        assert!(rendered(&terminal).contains("initial scan failed"));
+
+        state.refresh_with(SystemSnapshot::empty());
+        terminal.draw(|frame| ui::render(frame, &mut state))?;
+        assert!(rendered(&terminal).contains("No TCP or UDP listeners found"));
+        assert!(!rendered(&terminal).contains("scan unavailable"));
+
+        state.report_scan_failure(PortSpyError::Internal("scan unavailable".into()));
+        terminal.draw(|frame| ui::render(frame, &mut state))?;
+        assert!(rendered(&terminal).contains("showing last scan"));
+        assert!(rendered(&terminal).contains("scan unavailable"));
+        Ok(())
+    }
+
+    #[test]
+    fn wide_preview_tracks_the_selection_and_can_restore_the_full_table()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let first = TcpListener::bind("127.0.0.1:0")?;
+        let second = TcpListener::bind("127.0.0.1:0")?;
+        let mut listeners = vec![
+            listener(first.local_addr()?.port(), ProcessId(42), OriginKind::Codex),
+            listener(
+                second.local_addr()?.port(),
+                ProcessId(43),
+                OriginKind::ClaudeCode,
+            ),
+        ];
+        listeners.sort_by_key(|listener| listener.port);
+        let mut state = AppState::new();
+        state.snapshot.listeners = listeners;
+        state.apply(Action::MoveTop);
+        let mut wide = Terminal::new(TestBackend::new(132, 20))?;
+        wide.draw(|frame| ui::render(frame, &mut state))?;
+        assert!(rendered(&wide).contains("◇ listener preview"));
+        assert!(rendered(&wide).contains("≡ listeners 2"));
+        let first = state.selected;
+        state.apply(Action::MoveDown);
+        wide.draw(|frame| ui::render(frame, &mut state))?;
+        let preview = rendered(&wide);
+        assert_ne!(state.selected, first);
+        assert!(preview.contains(&format!("PID {}", state.snapshot.listeners[1].pid())));
+
+        state.apply(Action::TogglePreview);
+        wide.draw(|frame| ui::render(frame, &mut state))?;
+        assert!(!rendered(&wide).contains("listener preview"));
+        assert!(rendered(&wide).contains("ADDRESS"));
+        assert_eq!(state.selected, Some(state.snapshot.listeners[1].id));
+
+        state.apply(Action::TogglePreview);
+        let mut narrow = Terminal::new(TestBackend::new(80, 20))?;
+        narrow.draw(|frame| ui::render(frame, &mut state))?;
+        assert!(!rendered(&narrow).contains("listener preview"));
+        Ok(())
+    }
+
+    #[test]
     fn inline_port_search_and_compact_inspection_keep_the_same_target()
     -> Result<(), Box<dyn std::error::Error>> {
         let first = TcpListener::bind("127.0.0.1:0")?;
@@ -287,7 +392,7 @@ mod tests {
         state.apply(Action::Inspect);
         terminal.draw(|frame| ui::render(frame, &mut state))?;
         let inspect_screen = rendered(&terminal);
-        assert!(inspect_screen.contains("inspector"));
+        assert!(inspect_screen.contains("◎ inspector"));
         assert!(inspect_screen.contains("Claude Code · high confidence"));
         assert!(!inspect_screen.contains("listeners 1"));
 
@@ -328,6 +433,41 @@ mod tests {
             assert!(!screen.contains("<exited>"));
             assert!(!screen.contains("PID 0"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn an_attributed_service_is_searchable_and_cannot_be_stopped_by_name()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use portspy_core::domain::listener::SocketAttribution;
+
+        let socket = TcpListener::bind("127.0.0.1:0")?;
+        let mut listener = listener(
+            socket.local_addr()?.port(),
+            ProcessId(0),
+            OriginKind::Unknown,
+        );
+        listener.socket_attribution = Some(SocketAttribution {
+            uid: Some(0),
+            service: Some("example-service.service".to_owned()),
+        });
+        let mut state = AppState::new();
+        let id = listener.id;
+        state.snapshot.listeners.push(listener);
+        state.apply(Action::Search);
+        for character in "example-service".chars() {
+            state.push_search_char(character);
+        }
+        assert_eq!(state.selected, Some(id));
+        state.apply(Action::Inspect);
+        let mut terminal = Terminal::new(TestBackend::new(80, 20))?;
+        terminal.draw(|frame| ui::render(frame, &mut state))?;
+        let screen = rendered(&terminal);
+        assert!(screen.contains("example-service.service"));
+        assert!(screen.contains("PID unavailable"));
+        assert!(!screen.contains("Unknown owner"));
+        state.apply(Action::RequestKill);
+        assert!(state.stop_plan.is_none());
         Ok(())
     }
 }

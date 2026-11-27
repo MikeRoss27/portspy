@@ -2,11 +2,11 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
-use std::net::SocketAddr;
 use std::os::fd::AsRawFd;
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use portspy_core::domain::listener::SocketAttribution;
 use portspy_core::domain::process::{ProcessId, ProcessIdentity};
 use portspy_core::domain::protocol::Protocol;
 use portspy_core::platform::{KillOutcome, PlatformError, RawListener, RawProcess};
@@ -14,6 +14,9 @@ use procfs::net::{self, TcpState};
 use procfs::process::{FDTarget, Process, all_processes};
 use procfs::{ProcError, ProcResult};
 use rustix::process::{Pid, PidfdFlags, Signal, pidfd_open, pidfd_send_signal};
+
+#[path = "linux_diag.rs"]
+mod diag;
 
 pub(super) fn listeners() -> Result<Vec<RawListener>, PlatformError> {
     let tcp = net::tcp().map_err(discovery_error)?;
@@ -24,17 +27,17 @@ pub(super) fn listeners() -> Result<Vec<RawListener>, PlatformError> {
         .into_iter()
         .chain(tcp6)
         .filter(|row| row.state == TcpState::Listen)
-        .map(|row| (row.inode, Protocol::Tcp, row.local_address))
+        .map(|row| ((row.inode, Protocol::Tcp, row.local_address), row.uid))
         .chain(
             udp.into_iter()
                 .chain(udp6)
-                .map(|row| (row.inode, Protocol::Udp, row.local_address)),
+                .map(|row| ((row.inode, Protocol::Udp, row.local_address), row.uid)),
         )
-        .filter(|(_, _, address)| address.port() != 0)
+        .filter(|((_, _, address), _)| address.port() != 0)
         .collect();
     let mut owners: HashMap<_, HashSet<_>> = sockets
         .iter()
-        .map(|(inode, _, _)| (*inode, HashSet::new()))
+        .map(|((inode, _, _), _)| (*inode, HashSet::new()))
         .collect();
 
     for process in all_processes().map_err(discovery_error)?.flatten() {
@@ -53,35 +56,56 @@ pub(super) fn listeners() -> Result<Vec<RawListener>, PlatformError> {
         }
     }
 
-    let mut seen = HashSet::new();
-    let mut listeners = Vec::new();
-    for (inode, protocol, address) in sockets {
-        let pids = owners.get(&inode).into_iter().flatten();
-        if pids.clone().next().is_none() {
-            push_listener(&mut seen, &mut listeners, protocol, address, ProcessId(0));
-        }
-        for &pid in pids {
-            push_listener(&mut seen, &mut listeners, protocol, address, pid);
-        }
-    }
-    Ok(listeners)
-}
+    let unattributed: HashSet<_> = sockets
+        .iter()
+        .map(|(key, _)| *key)
+        .filter(|(inode, _, _)| owners.get(inode).is_none_or(HashSet::is_empty))
+        .collect();
+    let cgroups = diag::socket_cgroups(&unattributed);
+    let services = diag::services(cgroups.values().copied().collect());
 
-fn push_listener(
-    seen: &mut HashSet<(Protocol, SocketAddr, ProcessId)>,
-    listeners: &mut Vec<RawListener>,
-    protocol: Protocol,
-    address: SocketAddr,
-    pid: ProcessId,
-) {
-    if seen.insert((protocol, address, pid)) {
-        listeners.push(RawListener {
-            protocol,
-            address: address.ip(),
-            port: address.port(),
-            pid,
-        });
+    let mut listeners = HashMap::new();
+    for (key @ (inode, protocol, address), uid) in sockets {
+        if unattributed.contains(&key) {
+            let service = cgroups
+                .get(&key)
+                .and_then(|group| services.get(group))
+                .cloned();
+            listeners
+                .entry((protocol, address, ProcessId(0)))
+                .and_modify(|previous: &mut Option<SocketAttribution>| {
+                    if let Some(previous) = previous {
+                        if previous.uid != Some(uid) {
+                            previous.uid = None;
+                        }
+                        if previous.service != service {
+                            previous.service = None;
+                        }
+                    }
+                })
+                .or_insert(Some(SocketAttribution {
+                    uid: Some(uid),
+                    service,
+                }));
+        } else {
+            for &pid in owners.get(&inode).into_iter().flatten() {
+                listeners.insert((protocol, address, pid), None);
+            }
+        }
     }
+
+    Ok(listeners
+        .into_iter()
+        .map(
+            |((protocol, address, pid), socket_attribution)| RawListener {
+                protocol,
+                address: address.ip(),
+                port: address.port(),
+                pid,
+                socket_attribution,
+            },
+        )
+        .collect())
 }
 
 fn optional_table<T>(result: ProcResult<Vec<T>>) -> Result<Vec<T>, PlatformError> {

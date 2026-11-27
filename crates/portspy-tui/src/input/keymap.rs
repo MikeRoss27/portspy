@@ -19,6 +19,7 @@ pub fn map_key(key: KeyEvent, mode: AppMode) -> Option<Action> {
     match mode {
         AppMode::Inspect if key.code == KeyCode::PageUp => Some(Action::ScrollDetailsUp),
         AppMode::Inspect if key.code == KeyCode::PageDown => Some(Action::ScrollDetailsDown),
+        AppMode::Browse if key.code == KeyCode::Tab => Some(Action::TogglePreview),
         AppMode::Browse | AppMode::Inspect => map_browse_key(key),
         AppMode::Search => map_search_key(key),
         AppMode::ConfirmKill => map_confirm_key(key),
@@ -39,6 +40,7 @@ fn map_browse_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('/') => Some(Action::Search),
         KeyCode::Char('r') => Some(Action::ToggleRecent),
         KeyCode::Char('u') => Some(Action::ToggleKnownOwners),
+        KeyCode::Char('t') => Some(Action::CycleProtocol),
         KeyCode::Char('s') => Some(Action::SortNextField),
         KeyCode::Char('S') => Some(Action::ToggleSortOrder),
         // `k` stays vim-up; killing is `x` (like "close" in mail clients).
@@ -122,6 +124,16 @@ mod tests {
 
     #[test]
     fn browse_mode_actions() {
+        assert_eq!(
+            map_key(key(KeyCode::Char('t')), AppMode::Browse),
+            Some(Action::CycleProtocol)
+        );
+        assert_eq!(
+            map_key(key(KeyCode::Tab), AppMode::Browse),
+            Some(Action::TogglePreview)
+        );
+        assert_eq!(map_key(key(KeyCode::Tab), AppMode::Inspect), None);
+        assert_eq!(map_key(key(KeyCode::Char('t')), AppMode::Search), None);
         assert_eq!(
             map_key(key(KeyCode::Enter), AppMode::Browse),
             Some(Action::Inspect)

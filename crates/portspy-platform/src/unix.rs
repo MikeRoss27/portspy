@@ -90,6 +90,7 @@ mod tests {
                 address: address.ip(),
                 port: address.port(),
                 pid,
+                socket_attribution: None,
             }));
         }
         let processes = platform.processes().map_err(std::io::Error::other)?;

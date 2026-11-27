@@ -3,11 +3,12 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
+use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 
 use portspy_core::domain::confidence::Confidence;
 use portspy_core::domain::listener::Listener;
 use portspy_core::domain::origin::OriginKind;
+use portspy_core::ports::Exposure;
 
 use crate::format::{address, duration, memory};
 use crate::state::AppState;
@@ -17,7 +18,10 @@ use crate::ui::theme::Theme;
 /// Renders the details of the selected listener at its current scroll position.
 pub fn render(frame: &mut Frame<'_>, area: Rect, state: &mut AppState) {
     let theme = Theme::default();
-    let block = Block::bordered().title(" inspector ");
+    let block = theme.panel("◎", "inspector").title_bottom(Line::from(vec![
+        Span::styled(" Esc ", theme.keycap()),
+        Span::raw(" Back "),
+    ]));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     state.inspection_page_size = inner.height.saturating_sub(1).clamp(1, 6);
@@ -47,38 +51,125 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, state: &mut AppState) {
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
-                .end_symbol(None),
+                .end_symbol(None)
+                .thumb_style(theme.accent_text()),
             area,
             &mut scrollbar_state,
         );
     }
 }
 
+pub(crate) fn preview(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
+    let theme = Theme::default();
+    let block = theme
+        .panel("◇", "listener preview")
+        .title_bottom(Line::from(vec![
+            Span::styled(" Enter ", theme.keycap()),
+            Span::raw(" Inspect "),
+        ]));
+    let lines = state.selected_listener().map_or_else(
+        || {
+            vec![Line::from(Span::styled(
+                " No listener selected",
+                theme.muted_text(),
+            ))]
+        },
+        |listener| {
+            let application = listener.owner_label();
+            let known_owner = listener.pid().as_u32() != 0;
+            let (exposure_icon, exposure_style) = theme.exposure(Exposure::of(listener.address));
+            let mut lines = vec![
+                endpoint(listener, " ", theme),
+                Line::from(Span::styled(
+                    format!(" {application}"),
+                    theme.table_header(),
+                )),
+                Line::default(),
+                section("◎", "Binding", theme),
+                Line::from(format!(
+                    " {}",
+                    address::full(listener.address, listener.port)
+                )),
+                Line::from(Span::styled(
+                    format!(" {exposure_icon} {}", address::scope(listener.address)),
+                    exposure_style,
+                )),
+            ];
+            if known_owner {
+                lines.extend([
+                    Line::default(),
+                    section("▪", "Owner", theme),
+                    field(
+                        " Process",
+                        format!(
+                            "{} · PID {}",
+                            listener.process.display_name(),
+                            listener.pid()
+                        ),
+                        theme,
+                    ),
+                    field(" Origin", listener.origin.label.as_str(), theme),
+                    field(" Project", listener.project.name().unwrap_or("—"), theme),
+                    field(
+                        " Memory",
+                        memory::memory(listener.process.memory_bytes),
+                        theme,
+                    ),
+                ]);
+            } else if let Some(attribution) = &listener.socket_attribution {
+                lines.extend([Line::default(), section("▪", "Socket owner", theme)]);
+                if let Some(uid) = attribution.uid {
+                    lines.push(field(" Socket UID", uid.to_string(), theme));
+                }
+                lines.push(Line::from(Span::styled(
+                    " PID unavailable",
+                    theme.muted_text(),
+                )));
+            }
+            lines
+        },
+    );
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(block),
+        area,
+    );
+}
+
 fn details(listener: &Listener, now: std::time::SystemTime, theme: Theme) -> Vec<Line<'static>> {
+    let application = listener.owner_label();
     let known_owner = listener.pid().as_u32() != 0;
-    let application = if known_owner {
-        listener.application.label.as_str()
-    } else {
-        "Unknown owner"
-    };
-    let title = Line::from(Span::styled(
-        format!(
-            ":{} {} · {application}",
-            listener.port,
-            listener.protocol.as_str().to_ascii_uppercase(),
-        ),
-        theme.header(),
+    let mut title = endpoint(listener, "", theme);
+    title.push_span(Span::styled(
+        format!(" · {application}"),
+        theme.table_header(),
     ));
+    let (exposure_icon, _) = theme.exposure(Exposure::of(listener.address));
     let binding = field(
         "Binding",
         format!(
-            "{} · {}",
+            "{} · {exposure_icon} {}",
             address::full(listener.address, listener.port),
             address::scope(listener.address),
         ),
         theme,
     );
     if !known_owner {
+        if let Some(context) = &listener.socket_attribution {
+            let mut lines = vec![title, binding];
+            if let Some(service) = &context.service {
+                lines.push(field("Service", service.as_str(), theme));
+            }
+            if let Some(uid) = context.uid {
+                lines.push(field("Socket UID", uid.to_string(), theme));
+            }
+            lines.push(Line::from(Span::styled(
+                "PID unavailable",
+                theme.muted_text(),
+            )));
+            return lines;
+        }
         return vec![
             title,
             binding,
@@ -108,25 +199,22 @@ fn details(listener: &Listener, now: std::time::SystemTime, theme: Theme) -> Vec
 
     if listener.is_duplicate {
         lines.push(Line::from(Span::styled(
-            "Possible duplicate dev server",
+            "≋ Possible duplicate dev server",
             theme.warning_text(),
         )));
     }
     if listener.is_orphan {
         lines.push(Line::from(Span::styled(
-            "Parent process gone",
+            "△ Parent process gone",
             theme.warning_text(),
         )));
     }
 
-    lines.extend([
-        Line::default(),
-        Line::from(Span::styled("Process chain", theme.table_header())),
-    ]);
+    lines.extend([Line::default(), section("↳", "Process chain", theme)]);
     lines.extend(process_tree::lines(listener, theme));
     lines.extend([
         Line::default(),
-        Line::from(Span::styled("Process details", theme.table_header())),
+        section("▪", "Process details", theme),
         field(
             "Memory",
             memory::memory(listener.process.memory_bytes),
@@ -161,6 +249,23 @@ fn details(listener: &Listener, now: std::time::SystemTime, theme: Theme) -> Vec
         ),
     ]);
     lines
+}
+
+fn endpoint(listener: &Listener, indent: &str, theme: Theme) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{indent}:{}", listener.port), theme.header()),
+        Span::styled(
+            format!(" {}", listener.protocol.as_str().to_ascii_uppercase()),
+            theme.protocol(listener.protocol),
+        ),
+    ])
+}
+
+fn section(icon: &str, label: &str, theme: Theme) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!(" {icon} "), theme.accent_text()),
+        Span::styled(label.to_owned(), theme.table_header()),
+    ])
 }
 
 fn field(label: &str, value: impl Into<String>, theme: Theme) -> Line<'static> {
@@ -209,6 +314,7 @@ mod tests {
             protocol: Protocol::Tcp,
             address,
             port,
+            socket_attribution: None,
             process: ProcessInfo {
                 pid,
                 parent_pid: None,
